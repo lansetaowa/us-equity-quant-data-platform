@@ -1,0 +1,15 @@
+services:
+  postgres:
+    image: postgres:16
+    container_name: quant_metadata_postgres
+    environment:
+      POSTGRES_USER: quant
+      POSTGRES_PASSWORD: quant
+      POSTGRES_DB: quant_metadata
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+
+volumes:
+  postgres_data:

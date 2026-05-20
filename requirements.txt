@@ -1,0 +1,8 @@
+duckdb
+pandas
+pyarrow
+psycopg[binary]
+python-dotenv
+google-cloud-storage
+pytest
+ruff
