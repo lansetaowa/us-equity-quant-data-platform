@@ -1,4 +1,4 @@
-import pandas as pd
+# import pandas as pd
 
 from scripts.transform_tiingo_prices_to_dwd import (
     normalize_tiingo_price_data,
