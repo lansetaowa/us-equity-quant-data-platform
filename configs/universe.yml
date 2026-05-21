@@ -1,0 +1,16 @@
+symbols:
+  - AAPL
+  - MSFT
+  - NVDA
+  - AMZN
+  - META
+  - GOOGL
+  - TSLA
+  - SPY
+  - QQQ
+  - IWM
+
+start_date: "2020-01-01"
+end_date: "2025-12-31"
+
+source: "tiingo"

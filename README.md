@@ -6,6 +6,23 @@ This project is designed to support long-term alpha research, feature generation
 
 ## Current Scope
 
+### Week 2: Tiingo EOD Market Data Ingestion
+
+Week 2 adds a real US equity daily price ingestion pipeline using Tiingo EOD as the initial market data source.
+
+The pipeline supports:
+
+- Config-driven ticker universe
+- Tiingo EOD API ingestion
+- ODS raw JSON storage
+- DWD standardized Parquet output
+- Adjusted OHLCV, dividend cash, and split factor fields
+- DuckDB queries over real price data
+- Postgres metadata logging for pipeline runs
+- GCS sync for ODS and DWD data
+- Unit tests for transformation logic
+
+### Previous
 Week 1 bootstrap completed:
 
 - Local PostgreSQL metadata database via Docker Compose
