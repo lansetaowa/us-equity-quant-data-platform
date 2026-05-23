@@ -8,7 +8,7 @@ import uuid
 import pandas as pd
 import yaml
 
-from scripts.metadata_utils import log_pipeline_run
+# from scripts.metadata_utils import log_pipeline_run
 
 
 CONFIG_PATH = Path("configs/universe.yml")
@@ -164,12 +164,10 @@ def write_dwd_parquet(df: pd.DataFrame) -> None:
 
         print(f"Wrote {len(part)} rows to {output_path}")
 
-
-def main() -> None:
-    config = load_config()
-    symbols = config["symbols"]
-    load_id = str(uuid.uuid4())
-
+def transform_tiingo_prices_to_dwd(
+    symbols: list[str],
+    load_id: str,
+) -> dict:
     frames = []
 
     for symbol in symbols:
@@ -182,15 +180,21 @@ def main() -> None:
     validate_dwd_prices(dwd)
     write_dwd_parquet(dwd)
 
-    log_pipeline_run(
-    run_id=load_id,
-    pipeline_name="transform_tiingo_prices_to_dwd",
-    status="success",
-    row_count=len(dwd),
-    notes="Transformed Tiingo ODS daily prices to DWD Parquet.",
-    )
+    return {
+        "records_written": len(dwd),
+        "symbols_count": dwd["ticker"].nunique(),
+        "min_date": str(dwd["date"].min()),
+        "max_date": str(dwd["date"].max()),
+    }
 
-    print(f"Completed Tiingo DWD transform: {len(dwd)} rows")
+def main() -> None:
+    config = load_config()
+    symbols = config["symbols"]
+    load_id = str(uuid.uuid4())
+
+    result = transform_tiingo_prices_to_dwd(symbols=symbols, load_id=load_id)
+
+    print(f"Completed Tiingo DWD transform: {result}")
 
 
 if __name__ == "__main__":

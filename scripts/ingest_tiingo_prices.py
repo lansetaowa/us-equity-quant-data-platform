@@ -4,7 +4,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 import json
 import os
-import time
+# import time
 import uuid
 
 from dotenv import load_dotenv
@@ -81,25 +81,50 @@ def write_ods_json(symbol: str, data: list[dict], run_id: str) -> Path:
 
     return output_path
 
-
-def main() -> None:
-    config = load_config()
+def ingest_tiingo_prices(
+    symbols: list[str],
+    start_date: str,
+    end_date: str,
+    run_id: str,
+) -> dict:
     token = get_tiingo_token()
 
-    symbols = config["symbols"]
-    start_date = config["start_date"]
-    end_date = config["end_date"]
-
-    run_id = str(uuid.uuid4())
+    total_records = 0
+    output_files = []
 
     for symbol in symbols:
         print(f"Fetching Tiingo EOD prices for {symbol}...")
         data = fetch_tiingo_eod_prices(symbol, start_date, end_date, token)
         output_path = write_ods_json(symbol, data, run_id)
+
+        total_records += len(data)
+        output_files.append(str(output_path))
+
         print(f"Wrote {len(data)} records to {output_path}")
 
-        # Conservative throttle to avoid accidental rate-limit issues.
-        time.sleep(0.25)
+    return {
+        "source": "tiingo",
+        "dataset": "equity_price_daily",
+        "symbols_count": len(symbols),
+        "records_written": total_records,
+        "output_files": output_files,
+    }
+
+def main() -> None:
+    config = load_config()
+    symbols = config["symbols"]
+    start_date = config.get("start_date", "2020-01-01")
+    end_date = config.get("end_date", "2025-12-31")
+    run_id = str(uuid.uuid4())
+
+    result = ingest_tiingo_prices(
+        symbols=symbols,
+        start_date=start_date,
+        end_date=end_date,
+        run_id=run_id,
+    )
+
+    print(result)
 
 
 if __name__ == "__main__":

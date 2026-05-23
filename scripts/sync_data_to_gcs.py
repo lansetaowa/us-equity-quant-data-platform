@@ -21,8 +21,7 @@ def upload_file(bucket: storage.Bucket, local_path: Path) -> None:
 
     print(f"Uploaded {local_path} to gs://{bucket.name}/{object_name}")
 
-
-def main() -> None:
+def sync_data_to_gcs() -> None:
     load_dotenv()
 
     bucket_name = os.environ.get("GCS_BUCKET")
@@ -46,6 +45,10 @@ def main() -> None:
         for file_path in root.rglob("*"):
             if file_path.is_file() and file_path.suffix in allowed_suffixes:
                 upload_file(bucket, file_path)
+
+
+def main() -> None:
+    sync_data_to_gcs()
 
 
 if __name__ == "__main__":

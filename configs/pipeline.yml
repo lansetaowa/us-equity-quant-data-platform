@@ -1,0 +1,15 @@
+price_pipeline:
+  source: tiingo
+  dataset: equity_price_daily
+
+  # Use "backfill" for the first full historical load.
+  # Use "incremental" for daily refresh.
+  mode: incremental
+
+  backfill_start_date: "2020-01-01"
+  default_lookback_days: 7
+
+  local_ods_root: "data/ods/source=tiingo/dataset=equity_price_daily"
+  local_dwd_root: "data/dwd/equity_price_daily"
+
+  sync_to_gcs: true
