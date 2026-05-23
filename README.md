@@ -5,32 +5,18 @@ A cloud-oriented data engineering platform for US equity quantitative research.
 This project is designed to support long-term alpha research, feature generation, model training, and reproducible backtesting using US equity market data. It also serves as a practical data engineering project using a modern data lake and analytics stack.
 
 ## Current Scope
+- Week 3 added a metadata-driven incremental batch pipeline with a unified entrypoint (`python -m scripts.run_daily_price_pipeline`), backfill/incremental refresh modes, refresh-window calculation from PostgreSQL run history, structured `started` / `success` / `failed` logging, expanded pipeline metadata, DWD data quality checks, integrated GCS sync, and additional CI-tested pipeline utilities.
 
-### Week 2: Tiingo EOD Market Data Ingestion
+- Week 2 adds a real US equity daily price ingestion pipeline using Tiingo EOD as the initial market data source.
 
-Week 2 adds a real US equity daily price ingestion pipeline using Tiingo EOD as the initial market data source.
+- Week 1 bootstrap completed:
 
-The pipeline supports:
-
-- Config-driven ticker universe
-- Tiingo EOD API ingestion
-- ODS raw JSON storage
-- DWD standardized Parquet output
-- Adjusted OHLCV, dividend cash, and split factor fields
-- DuckDB queries over real price data
-- Postgres metadata logging for pipeline runs
-- GCS sync for ODS and DWD data
-- Unit tests for transformation logic
-
-### Previous
-Week 1 bootstrap completed:
-
-- Local PostgreSQL metadata database via Docker Compose
-- Synthetic daily equity price dataset
-- Local Parquet-based data lake layout
-- DuckDB SQL query over Parquet files
-- Google Cloud Storage bucket upload
-- Basic GitHub Actions CI with Ruff and pytest
+  - Local PostgreSQL metadata database via Docker Compose
+  - Synthetic daily equity price dataset
+  - Local Parquet-based data lake layout
+  - DuckDB SQL query over Parquet files
+  - Google Cloud Storage bucket upload
+  - Basic GitHub Actions CI with Ruff and pytest
 
 ## Architecture
 
