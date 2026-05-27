@@ -1,0 +1,21 @@
+version: 2
+
+models:
+  - name: ads_ml_research_panel
+    description: "ML and factor research panel with SQL-generated features and forward return labels."
+    columns:
+      - name: security_id
+        tests:
+          - not_null
+
+      - name: ticker
+        tests:
+          - not_null
+
+      - name: date
+        tests:
+          - not_null
+
+      - name: adj_close
+        tests:
+          - not_null

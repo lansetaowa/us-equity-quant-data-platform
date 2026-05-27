@@ -1,0 +1,30 @@
+version: 2
+
+models:
+  - name: stg_tiingo__equity_price_daily
+    description: "Staging model over Tiingo EOD DWD Parquet files."
+    columns:
+      - name: security_id
+        description: "Internal security identifier."
+        tests:
+          - not_null
+
+      - name: ticker
+        description: "Ticker symbol."
+        tests:
+          - not_null
+
+      - name: date
+        description: "Trading date."
+        tests:
+          - not_null
+
+      - name: adj_close
+        description: "Adjusted close price."
+        tests:
+          - not_null
+
+      - name: source
+        description: "Source data vendor."
+        tests:
+          - not_null

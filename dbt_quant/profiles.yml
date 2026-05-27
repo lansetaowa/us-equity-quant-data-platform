@@ -1,0 +1,8 @@
+dbt_quant:
+  target: dev
+  outputs:
+    dev:
+      type: duckdb
+      path: "../data/dbt/quant.duckdb"
+      schema: main
+      threads: 4

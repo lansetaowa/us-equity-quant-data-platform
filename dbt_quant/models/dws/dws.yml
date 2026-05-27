@@ -1,0 +1,40 @@
+version: 2
+
+models:
+  - name: dws_equity_returns_daily
+    description: "Daily adjusted returns generated from Tiingo EOD adjusted close prices."
+    columns:
+      - name: security_id
+        tests:
+          - not_null
+
+      - name: ticker
+        tests:
+          - not_null
+
+      - name: date
+        tests:
+          - not_null
+
+      - name: adj_close
+        tests:
+          - not_null
+
+  - name: dws_equity_features_daily
+    description: "Daily equity feature table with volume, momentum, volatility, price-position, and time-based features."
+    columns:
+      - name: security_id
+        tests:
+          - not_null
+
+      - name: ticker
+        tests:
+          - not_null
+
+      - name: date
+        tests:
+          - not_null
+
+      - name: adj_close
+        tests:
+          - not_null
