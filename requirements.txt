@@ -8,3 +8,5 @@ pytest
 ruff
 requests
 pyyaml
+dbt-core
+dbt-duckdb

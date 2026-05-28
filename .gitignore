@@ -15,3 +15,6 @@ data/
 # Never commit credentials
 *.json
 application_default_credentials.json
+
+dbt_quant/target/
+dbt_quant/dbt_packages/

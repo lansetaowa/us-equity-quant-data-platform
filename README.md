@@ -5,35 +5,88 @@ A cloud-oriented data engineering platform for US equity quantitative research.
 This project is designed to support long-term alpha research, feature generation, model training, and reproducible backtesting using US equity market data. It also serves as a practical data engineering project using a modern data lake and analytics stack.
 
 ## Current Scope
-- Week 3 added a metadata-driven incremental batch pipeline with a unified entrypoint (`python -m scripts.run_daily_price_pipeline`), backfill/incremental refresh modes, refresh-window calculation from PostgreSQL run history, structured `started` / `success` / `failed` logging, expanded pipeline metadata, DWD data quality checks, integrated GCS sync, and additional CI-tested pipeline utilities.
 
-- Week 2 adds a real US equity daily price ingestion pipeline using Tiingo EOD as the initial market data source.
+### Week 4: dbt Modeling Layer
 
-- Week 1 bootstrap completed:
+Week 4 adds a dbt + DuckDB modeling layer on top of the Tiingo DWD Parquet data.
 
-  - Local PostgreSQL metadata database via Docker Compose
-  - Synthetic daily equity price dataset
-  - Local Parquet-based data lake layout
-  - DuckDB SQL query over Parquet files
-  - Google Cloud Storage bucket upload
-  - Basic GitHub Actions CI with Ruff and pytest
+New capabilities added:
+
+- dbt project initialized under `dbt_quant/`
+- DuckDB-backed dbt profile for local analytics modeling
+- Staging model over Tiingo DWD Parquet files
+- DWS daily returns model with multi-horizon adjusted returns
+- DWS feature model with volume, momentum, lagged return, volatility, price-position, and time-based features
+- ADS ML/factor research panel with forward return labels and SPY-relative forward return labels
+- dbt tests for key non-null fields
+- dbt docs generation for model documentation and lineage
+- CI validation for dbt project parsing
+
+### Week 3: Metadata-Driven Incremental Batch Pipeline
+
+Week 3 converted the manual Tiingo ingestion workflow into a single-command, metadata-driven batch pipeline.
+
+New capabilities added:
+
+- Unified daily price pipeline entrypoint: `python -m scripts.run_daily_price_pipeline`
+- Backfill and incremental refresh modes configured through `configs/pipeline.yml`
+- Refresh-window calculation based on the last successful pipeline run
+- Expanded PostgreSQL metadata schema for pipeline state, data date ranges, source, dataset, mode, record counts, and error messages
+- Structured pipeline status logging with `started`, `success`, and `failed` states
+- DWD data quality checks for duplicate keys, invalid price rows, missing symbols, and row-count summaries
+- Integrated GCS sync as part of the daily batch pipeline
+- Package-style script execution using `python -m scripts.<module>` for consistent local and CI behavior
+- Additional CI-tested pipeline utilities
+
+### Week 2: Tiingo EOD Market Data Ingestion
+
+Week 2 added a real US equity daily price ingestion pipeline using Tiingo EOD as the initial market data source.
+
+New capabilities added:
+
+- Config-driven ticker universe
+- Tiingo EOD API ingestion
+- ODS raw JSON storage
+- DWD standardized Parquet output
+- Adjusted OHLCV, dividend cash, and split factor fields
+- DuckDB queries over real price data
+- PostgreSQL metadata logging for pipeline runs
+- GCS sync for ODS and DWD data
+- Unit tests for transformation logic
+
+### Week 1: Platform Bootstrap
+
+Week 1 bootstrap completed:
+
+- Local PostgreSQL metadata database via Docker Compose
+- Synthetic daily equity price dataset
+- Local Parquet-based data lake layout
+- DuckDB SQL query over Parquet files
+- Google Cloud Storage bucket upload
+- Basic GitHub Actions CI with Ruff and pytest
 
 ## Architecture
 
 ```text
-sample price data
-    -> local Parquet
-    -> DuckDB SQL query
-    -> PostgreSQL metadata database
-    -> Google Cloud Storage bucket
+Tiingo EOD API
+    -> ODS raw JSON
+    -> DWD standardized Parquet
+    -> dbt + DuckDB staging models
+    -> DWS returns and feature models
+    -> ADS ML/factor research panel
+    -> DuckDB / Python research queries
+    -> GCS data lake sync
+    -> PostgreSQL pipeline metadata
     -> GitHub Actions CI validation
 ```
 
 ## Tech Stack
 
 - Python / pandas
+- Tiingo EOD API
 - Parquet / pyarrow
 - DuckDB
+- dbt / dbt-duckdb
 - PostgreSQL
 - Docker Compose
 - Google Cloud Storage
@@ -49,22 +102,56 @@ us-equity-quant-data-platform/
     workflows/
       ci.yml
 
+  configs/
+    universe.yml
+    pipeline.yml
+
   data/
+    ods/
+      source=tiingo/
+        dataset=equity_price_daily/
     dwd/
       equity_price_daily/
+    dbt/
+      quant.duckdb
+
+  dbt_quant/
+    dbt_project.yml
+    profiles.yml
+    profiles.yml.example
+    models/
+      staging/
+        stg_tiingo__equity_price_daily.sql
+        staging.yml
+      dws/
+        dws_equity_returns_daily.sql
+        dws_equity_features_daily.sql
+        dws.yml
+      ads/
+        ads_ml_research_panel.sql
+        ads.yml
 
   scripts/
     __init__.py
-    create_sample_prices.py
-    query_duckdb.py
-    init_metadata.py
-    upload_to_gcs.py
+    ingest_tiingo_prices.py
+    transform_tiingo_prices_to_dwd.py
+    query_real_prices_duckdb.py
+    query_dbt_models.py
+    sync_data_to_gcs.py
+    metadata_utils.py
+    pipeline_state.py
+    data_quality_checks.py
+    run_migrations.py
+    run_daily_price_pipeline.py
 
   sql/
     001_create_metadata_tables.sql
+    002_alter_pipeline_runs.sql
 
   tests/
     test_sample_prices.py
+    test_tiingo_price_transform.py
+    test_pipeline_state.py
 
   docker-compose.yml
   requirements.txt
@@ -109,11 +196,12 @@ Create a local `.env` file based on `.env.example`:
 POSTGRES_DSN=postgresql://quant:quant@localhost:5432/quant_metadata
 GCP_PROJECT_ID=your-gcp-project-id
 GCS_BUCKET=your-gcs-bucket-name
+TIINGO_API_TOKEN=your-tiingo-api-token
 ```
 
-Do not commit `.env`, credential files, API keys, or local data files.
+Do not commit `.env`, credential files, API keys, local data files, or generated DuckDB databases.
 
-## Run the Bootstrap Pipeline
+## Run the Daily Price Pipeline
 
 ### 1. Start local PostgreSQL
 
@@ -145,72 +233,108 @@ Exit with:
 \q
 ```
 
-### 2. Initialize metadata tables
+### 2. Run metadata migrations
 
 ```bash
-python scripts/init_metadata.py
+python -m scripts.run_migrations
 ```
 
-This creates the metadata schema and registers the sample dataset.
+This creates the metadata schema and applies pipeline metadata migrations.
 
-### 3. Create sample Parquet data
+### 3. Run the unified daily price pipeline
 
 ```bash
-python scripts/create_sample_prices.py
+python -m scripts.run_daily_price_pipeline
 ```
 
-Expected output:
+This pipeline performs:
+
+1. Config loading from `configs/universe.yml` and `configs/pipeline.yml`
+2. Refresh-window calculation using PostgreSQL pipeline history
+3. Tiingo EOD ingestion
+4. ODS raw JSON write
+5. DWD standardized Parquet write
+6. DWD data quality checks
+7. PostgreSQL pipeline status logging
+8. GCS sync for ODS and DWD files
+
+### 4. Query DWD price data with DuckDB
+
+```bash
+python -m scripts.query_real_prices_duckdb
+```
+
+This summarizes the DWD Parquet price data by ticker and prints recent sample rows.
+
+## dbt Modeling
+
+Run dbt locally from the `dbt_quant/` directory:
+
+```bash
+cd dbt_quant
+dbt debug --profiles-dir .
+dbt run --profiles-dir .
+dbt test --profiles-dir .
+dbt docs generate --profiles-dir .
+```
+
+Optional: serve dbt docs locally.
+
+```bash
+dbt docs serve --profiles-dir .
+```
+
+Query the dbt-generated ML/factor research panel from the project root:
+
+```bash
+python -m scripts.query_dbt_models
+```
+
+The dbt modeling layer currently includes:
 
 ```text
-Wrote 15 rows to data/dwd/equity_price_daily/year=2025/month=01/equity_price_daily.parquet
+stg_tiingo__equity_price_daily
+    -> dws_equity_returns_daily
+    -> dws_equity_features_daily
+    -> ads_ml_research_panel
 ```
 
-### 4. Query Parquet data with DuckDB
+### dbt Models
 
-```bash
-python scripts/query_duckdb.py
-```
+| Layer | Model | Purpose |
+|---|---|---|
+| staging | `stg_tiingo__equity_price_daily` | Reads DWD Tiingo Parquet files and standardizes field types |
+| DWS | `dws_equity_returns_daily` | Generates multi-horizon adjusted returns |
+| DWS | `dws_equity_features_daily` | Generates SQL-based volume, momentum, volatility, price-position, and time features |
+| ADS | `ads_ml_research_panel` | Produces ML/factor research panel with forward return labels |
 
-Expected output should summarize the sample tickers, row counts, average close prices, and date ranges.
+### ADS Labels
 
-### 5. Upload sample Parquet data to GCS
+The ADS research panel includes:
 
-Before running this step, make sure:
+- `fwd_ret_1d`
+- `fwd_ret_5d`
+- `fwd_ret_20d`
+- `label_direction_5d`
+- `label_direction_20d`
+- `fwd_excess_ret_20d_vs_spy`
 
-1. A GCS bucket already exists.
-2. `GCP_PROJECT_ID` and `GCS_BUCKET` are set in `.env`.
-3. You have authenticated locally with Google Cloud.
-
-```bash
-gcloud init
-gcloud auth application-default login
-```
-
-Then run:
-
-```bash
-python scripts/upload_to_gcs.py
-```
-
-Verify the upload:
-
-```bash
-gcloud storage ls gs://YOUR_BUCKET_NAME/dwd/equity_price_daily/year=2025/month=01/
-```
-
-You should see:
-
-```text
-gs://YOUR_BUCKET_NAME/dwd/equity_price_daily/year=2025/month=01/equity_price_daily.parquet
-```
+`fwd_excess_ret_20d_vs_spy` is calculated as each ticker's future 20-day return minus SPY's future 20-day return on the same date.
 
 ## Testing and CI
 
-Run checks locally:
+Run checks locally from the project root:
 
 ```bash
 python -m ruff check .
 python -m pytest -q
+```
+
+Validate dbt locally:
+
+```bash
+cd dbt_quant
+dbt parse --profiles-dir .
 ```
 
 GitHub Actions automatically runs linting and tests on every push and pull request.
@@ -222,6 +346,7 @@ The current CI workflow performs:
 3. Dependency installation
 4. Ruff linting
 5. pytest unit tests
+6. dbt project parsing
 
 ## Data Storage Design
 
@@ -235,34 +360,86 @@ GCS bucket
   ads/    research marts for ML and backtesting
 ```
 
-In the current bootstrap phase, only a sample DWD dataset is generated.
+Local development uses the same conceptual layers under `data/`.
+
+```text
+data/
+  ods/    raw Tiingo JSON payloads
+  dwd/    standardized Tiingo EOD Parquet files
+  dbt/    local DuckDB database generated by dbt
+```
 
 PostgreSQL is used for metadata and pipeline control, not for storing large market data tables.
+
+## Data Inspection
+
+Parquet and DuckDB files are not usually inspected by double-clicking them. Recommended inspection methods:
+
+### Inspect DWD Parquet with DuckDB
+
+```bash
+python -m scripts.query_real_prices_duckdb
+```
+
+### Inspect dbt-generated ADS panel
+
+```bash
+python -m scripts.query_dbt_models
+```
 
 ## Design Principles
 
 - Store analytical datasets as Parquet files.
 - Use GCS as the cloud data lake.
 - Use DuckDB for local analytical SQL over Parquet.
+- Use dbt to manage SQL-based transformation models, tests, docs, and lineage.
 - Use PostgreSQL for metadata and pipeline control.
 - Keep data pipelines reproducible and testable.
 - Keep raw data immutable.
-- Avoid committing credentials, local data files, or environment-specific configuration.
-- Use CI to catch schema, import, linting, and basic data quality issues early.
+- Use metadata-driven incremental refresh instead of full reloads for daily updates.
+- Avoid committing credentials, local data files, generated databases, or environment-specific configuration.
+- Use CI to catch schema, import, linting, testing, and dbt parsing issues early.
+
+## Operating Conventions
+
+Use package-style Python execution from the project root:
+
+```bash
+python -m scripts.run_migrations
+python -m scripts.run_daily_price_pipeline
+python -m scripts.query_real_prices_duckdb
+python -m scripts.query_dbt_models
+```
+
+Prefer imports like:
+
+```python
+from scripts.data_quality_checks import run_price_quality_checks
+```
+
+Avoid relying on script-relative imports such as:
+
+```python
+from data_quality_checks import run_price_quality_checks
+```
+
+This keeps local execution and GitHub Actions behavior consistent.
 
 ## Roadmap
 
 Next steps:
 
-1. Ingest real US equity daily price data.
-2. Build ODS and DWD layers for market data.
-3. Add dbt models and data quality tests.
-4. Add Airflow orchestration.
-5. Generate reusable feature and label datasets.
-6. Build ML and backtest research marts.
-7. Add SEC fundamentals, FRED macro data, and Fama-French factors.
-8. Improve documentation with architecture diagrams and data dictionaries.
+1. Complete and stabilize the dbt modeling layer.
+2. Add richer Python-based technical indicator features, including RSI, MACD, ATR, ADX, Bollinger Bands, and candlestick patterns.
+3. Build reusable DWS/ADS feature and label datasets for factor research and ML modeling.
+4. Build a reproducible factor backtest pipeline and reporting layer.
+5. Add Airflow or cron-based orchestration for scheduled daily refresh.
+6. Add SEC fundamentals, FRED macro data, and Fama-French factors.
+7. Add architecture diagrams, data dictionaries, and project documentation.
+8. Optionally add a dashboard for data freshness, pipeline status, and factor research outputs.
 
 ## Notes
 
-This repository is currently in the bootstrap phase. The sample price dataset is synthetic and is only used to validate the project structure, local services, Parquet storage, DuckDB queries, GCS upload, and CI workflow.
+This repository is evolving from a bootstrap data engineering project into a US equity quantitative research data platform.
+
+The current implementation supports Tiingo EOD ingestion, metadata-driven incremental refresh, DWD Parquet storage, dbt-managed returns/features/ADS modeling, PostgreSQL run logging, GCS sync, and CI validation. Future work will extend the platform with richer technical features, factor research, ML modeling, scheduled orchestration, and broader market/fundamental datasets.

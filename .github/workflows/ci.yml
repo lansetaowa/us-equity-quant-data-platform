@@ -29,3 +29,8 @@ jobs:
       - name: Run tests
         run: |
           python -m pytest -q
+
+      - name: Validate dbt project
+        run: |
+          cd dbt_quant
+          dbt parse --profiles-dir .
