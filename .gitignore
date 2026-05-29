@@ -18,3 +18,5 @@ application_default_credentials.json
 
 dbt_quant/target/
 dbt_quant/dbt_packages/
+dbt_quant/logs/
+dbt_quant/.user.yml
