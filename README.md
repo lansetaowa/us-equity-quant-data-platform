@@ -4,6 +4,112 @@ A cloud-oriented data engineering platform for US equity quantitative research.
 
 This project is designed to support long-term alpha research, feature generation, model training, and reproducible backtesting using US equity market data. It also serves as a practical data engineering project using a modern data lake and analytics stack.
 
+## Cloud Warehouse Roadmap
+
+The project is moving from a local DuckDB-centered research workflow toward a cloud-backed analytical warehouse architecture.
+
+## Current Local Development Layer
+
+- Python ingests Tiingo EOD data.
+- ODS raw files and DWD clean Parquet files are written locally and synced to GCS.
+- dbt models currently run on DuckDB for local development.
+- PostgreSQL stores local pipeline metadata.
+
+## Target Cloud Architecture
+
+```text
+Tiingo EOD
+  -> GCS ODS raw files
+  -> GCS DWD clean Parquet
+  -> BigQuery DWD native tables
+  -> BigQuery DWS / ADS / mart tables
+  -> Looker Studio dashboards
+```
+
+## Why Keep GCS DWD Parquet?
+
+GCS stores the file-based data lake and source-of-truth data assets. The DWD Parquet layer can be used to rebuild BigQuery tables if table schemas, partitioning, clustering, or warehouse design need to change.
+
+This means DWD data is intentionally stored in two forms:
+
+```text
+GCS DWD Parquet
+  = durable file-based source of truth
+
+BigQuery DWD native table
+  = analytical warehouse copy for SQL, dbt, factor research, and dashboard queries
+```
+
+## Why Add BigQuery?
+
+BigQuery becomes the analytical warehouse for larger-scale research workloads, including:
+
+- Dynamic liquid universe construction
+- Factor evaluation
+- ML prediction panels
+- Dashboard-facing marts
+- Daily trade candidate generation
+
+## dbt Targets
+
+The dbt project supports two targets:
+
+```text
+dev   = DuckDB local development
+cloud = BigQuery analytical warehouse
+```
+
+CI currently validates the `dev` target only, so that tests can run without GCP credentials.
+
+## Near-Term Migration Path
+
+```text
+Week 5:
+  BigQuery foundation and configuration
+
+Week 6:
+  Security master and Tiingo candidate pool
+
+Week 7:
+  Pilot backfill engine
+
+Week 8:
+  Full candidate backfill and DWD-to-BigQuery load
+
+Week 9:
+  Dynamic liquid universe construction
+
+Week 10:
+  dbt DWS/ADS migration to BigQuery
+```
+
+## Final Target Shape
+
+```text
+GCS:
+  ods/
+  dwd/
+  reports/
+  models/
+
+BigQuery:
+  quant_dwh.dwd_equity_price_daily
+  quant_dwh.dim_security
+  quant_dwh.dim_universe_membership
+  quant_dwh.dws_equity_returns_daily
+  quant_dwh.dws_equity_features_daily
+  quant_dwh.ads_research_panel
+  quant_dwh.mart_factor_summary
+
+BigQuery Metadata:
+  quant_metadata.pipeline_runs
+  quant_metadata.symbol_ingestion_status
+  quant_metadata.backfill_batches
+  quant_metadata.data_quality_results
+  quant_metadata.model_registry
+```
+
+
 ## Current Scope
 
 ### Week 4: dbt Modeling Layer

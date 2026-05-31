@@ -4,6 +4,9 @@ on:
   push:
   pull_request:
 
+env:
+  PYTHONPATH: ${{ github.workspace }}
+
 jobs:
   test:
     runs-on: ubuntu-latest
@@ -24,7 +27,7 @@ jobs:
 
       - name: Lint
         run: |
-          ruff check .
+          python -m ruff check .
 
       - name: Run tests
         run: |
@@ -32,5 +35,6 @@ jobs:
 
       - name: Validate dbt project
         run: |
+          mkdir -p data/dbt
           cd dbt_quant
-          dbt parse --profiles-dir .
+          dbt parse --profiles-dir . --target dev
