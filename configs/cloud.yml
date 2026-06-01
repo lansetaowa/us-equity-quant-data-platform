@@ -1,0 +1,10 @@
+gcp:
+  project_id: "${GCP_PROJECT_ID}"
+  location: "${GCP_LOCATION}"
+
+bigquery:
+  dwh_dataset: "${BIGQUERY_DWH_DATASET}"
+  metadata_dataset: "${BIGQUERY_METADATA_DATASET}"
+
+gcs:
+  bucket: "${GCS_BUCKET}"

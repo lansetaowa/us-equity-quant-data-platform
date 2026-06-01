@@ -10,3 +10,6 @@ requests
 pyyaml
 dbt-core
 dbt-duckdb
+dbt-bigquery
+google-cloud-bigquery
+google-cloud-bigquery-storage
