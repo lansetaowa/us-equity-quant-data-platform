@@ -10,8 +10,8 @@ import psycopg
 MIGRATIONS = [
     Path("sql/001_create_metadata_tables.sql"),
     Path("sql/002_alter_pipeline_runs.sql"),
+    Path("sql/003_create_symbol_ingestion_status.sql"),
 ]
-
 
 def main() -> None:
     load_dotenv()
