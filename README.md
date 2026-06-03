@@ -112,6 +112,33 @@ BigQuery Metadata:
 
 ## Current Scope
 
+### Week 6: Security Master and Candidate Pool
+
+Week 6 adds a Tiingo-based security master and candidate pool layer. It downloads Tiingo supported tickers, standardizes them into `dim_security`, filters US common-stock candidates, and generates pilot/full bootstrap backfill task lists for the paid Tiingo bootstrap month.
+
+New capabilities added:
+
+- Tiingo supported tickers ingestion to local ODS and GCS
+- Standardized `dim_security` with internal `security_id`
+- Active security logic using a configurable end-date grace window
+- US common-stock candidate pool construction
+- `pilot_500` and `bootstrap_candidates` backfill task lists
+- Local Postgres metadata tables for symbol-level ingestion status and backfill batch tracking
+- Tests for security master filters and backfill task-list generation
+
+Important distinction:
+
+```text
+candidate_security_pool
+  = broad list of tickers eligible for future price/volume backfill
+
+us_liquid_100 / us_liquid_500
+  = future dynamic universes generated after price and volume data are available
+```
+
+The project avoids filtering candidates based on `start_date <= research_start_date`, because that would exclude post-2020 IPOs. Instead, the candidate pool checks whether each ticker overlaps with the requested backfill window.
+
+
 ### Week 4: dbt Modeling Layer
 
 Week 4 adds a dbt + DuckDB modeling layer on top of the Tiingo DWD Parquet data.

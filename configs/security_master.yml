@@ -1,0 +1,67 @@
+source: tiingo
+
+datasets:
+  supported_tickers: supported_tickers
+  equity_price_daily: equity_price_daily
+
+dates:
+  research_start_date: "2020-01-01"
+  price_backfill_start_date: "2019-01-01"
+
+security_master:
+  local_ods_root: "data/ods/source=tiingo/dataset=supported_tickers"
+  local_dwd_root: "data/dwd/security_master"
+  active_end_date_grace_days: 7
+
+candidate_filters:
+  asset_types:
+    - Stock
+
+  currencies:
+    - USD
+
+  exchanges:
+    - NASDAQ
+    - NYSE
+    - NYSE ARCA
+    - NYSE MKT
+
+  require_active_or_valid_after_research_start: true
+  min_start_date: "2020-01-01"
+
+  exclude_name_patterns:
+    - ETF
+    - ETN
+    - Fund
+    - Trust
+    - Warrant
+    - Unit
+    - Right
+    - Preferred
+    - Notes
+    - Bond
+
+candidate_pool:
+  output_name: us_common_stock_candidates
+
+backfill_planning:
+  paid_bootstrap_month: true
+
+  pilot_task_list:
+    name: pilot_500
+    limit: 500
+    purpose: "Validate paid-month price backfill engine before full candidate bootstrap."
+
+  bootstrap_task_list:
+    name: bootstrap_candidates
+    limit: null
+    purpose: "Backfill all eligible common-stock candidates during the paid Tiingo bootstrap month."
+
+target_research_universes:
+  - name: us_liquid_100
+    description: "Monthly dynamic top 100 liquid US common stocks after price/volume backfill."
+    top_n: 100
+
+  - name: us_liquid_500
+    description: "Monthly dynamic top 500 liquid US common stocks after price/volume backfill."
+    top_n: 500
