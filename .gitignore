@@ -9,6 +9,8 @@ __pycache__/
 
 data/
 *.parquet
+data/_tmp/
+reports/
 
 .DS_Store
 
