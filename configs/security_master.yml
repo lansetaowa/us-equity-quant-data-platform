@@ -41,6 +41,17 @@ candidate_filters:
     - Notes
     - Bond
 
+  exclude_ticker_patterns:
+    - "-R$"
+    - "-RT$"
+    - "-WS$"
+    - "-W$"
+    - "-WT$"
+    - "-U$"
+    - "-UN$" 
+    - "-P-[A-Z]$"
+    - "-P[A-Z]$"
+
 candidate_pool:
   output_name: us_common_stock_candidates
 

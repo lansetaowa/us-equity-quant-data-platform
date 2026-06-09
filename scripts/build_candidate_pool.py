@@ -74,8 +74,8 @@ def count_step(label: str, df: pd.DataFrame) -> None:
     print(f"{label}: {len(df):,}")
 
 
-def build_exclusion_regex(patterns: list[str]) -> re.Pattern[str] | None:
-    """Build case-insensitive regex for exclusion patterns."""
+def build_literal_regex(patterns: list[str]) -> re.Pattern[str] | None:
+    """Build case-insensitive regex from literal text patterns."""
     clean_patterns = [p.strip() for p in patterns if str(p).strip()]
 
     if not clean_patterns:
@@ -85,6 +85,16 @@ def build_exclusion_regex(patterns: list[str]) -> re.Pattern[str] | None:
     return re.compile("|".join(escaped), flags=re.IGNORECASE)
 
 
+def build_raw_regex(patterns: list[str]) -> re.Pattern[str] | None:
+    """Build case-insensitive regex from raw regex patterns."""
+    clean_patterns = [p.strip() for p in patterns if str(p).strip()]
+
+    if not clean_patterns:
+        return None
+
+    return re.compile("|".join(clean_patterns), flags=re.IGNORECASE)
+
+
 def build_candidate_pool(
     dim_security: pd.DataFrame,
     config: dict[str, Any],
@@ -92,18 +102,14 @@ def build_candidate_pool(
     """
     Build candidate security pool from dim_security.
 
-    Important:
-    This does NOT create the final dynamic liquid universe.
-    It only creates the broad candidate pool for later price/volume backfill.
+    This creates a broad backfill candidate pool, not the final dynamic universe.
 
-    To avoid survivorship bias, this function does not require:
-        start_date <= research_start_date
-
-    Instead, it only checks whether a ticker overlaps with the requested
-    backfill window:
-
-        start_date <= requested_end_date
-        end_date is null OR end_date >= requested_start_date
+    Current design choices:
+    - Keep post-2020 IPOs if they overlap with the requested backfill window.
+    - Require start_date and end_date to be present, based on manual inspection
+      that null-date tickers are likely unusable or unavailable for this stage.
+    - Exclude obvious non-common-stock ticker suffixes such as rights, warrants,
+      and units.
     """
     df = dim_security.copy()
 
@@ -113,8 +119,13 @@ def build_candidate_pool(
     asset_types = require_config_list(config, ["candidate_filters", "asset_types"])
     currencies = require_config_list(config, ["candidate_filters", "currencies"])
     exchanges = require_config_list(config, ["candidate_filters", "exchanges"])
+
     exclude_name_patterns = config["candidate_filters"].get(
         "exclude_name_patterns",
+        [],
+    )
+    exclude_ticker_patterns = config["candidate_filters"].get(
+        "exclude_ticker_patterns",
         [],
     )
 
@@ -159,6 +170,7 @@ def build_candidate_pool(
     ]:
         df[col] = normalize_string_series(df[col])
 
+    df["ticker"] = df["ticker"].str.upper()
     df["start_date"] = parse_date_column(df["start_date"])
     df["end_date"] = parse_date_column(df["end_date"])
 
@@ -184,34 +196,49 @@ def build_candidate_pool(
     df = df[df["exchange"].str.upper().isin(exchanges_norm)].copy()
     count_step(f"After exchange filter {exchanges}", df)
 
-    # Availability-overlap filter.
-    # This avoids excluding IPOs after 2020 while still removing tickers
-    # with no possible data overlap in our requested backfill window.
-    # also exclude all tickers without start/end date
     df = df[
-        (df["start_date"] <= requested_end_date)
+        df["start_date"].notna()
+        & (df["start_date"] <= requested_end_date)
     ].copy()
     count_step(
-        f"After start_date null or <= requested_end_date {requested_end_date.date()}",
+        f"After non-null start_date <= requested_end_date "
+        f"{requested_end_date.date()}",
         df,
     )
 
     df = df[
-        (df["end_date"] >= requested_start_date)
+        df["end_date"].notna()
+        & (df["end_date"] >= requested_start_date)
     ].copy()
     count_step(
-        f"After end_date null or >= requested_start_date {requested_start_date.date()}",
+        f"After non-null end_date >= requested_start_date "
+        f"{requested_start_date.date()}",
         df,
     )
+
+    # Exclude obvious rights, warrants, and units using ticker suffix patterns.
+    # Examples: UTF-R, STR-WS, VYX-W.
+    ticker_exclusion_regex = build_raw_regex(exclude_ticker_patterns)
+
+    if ticker_exclusion_regex is not None:
+        ticker = df["ticker"].fillna("")
+        exclude_mask = ticker.str.contains(ticker_exclusion_regex, regex=True)
+        excluded_count = int(exclude_mask.sum())
+        df = df[~exclude_mask].copy()
+        print(
+            "After ticker exclusion patterns "
+            f"{exclude_ticker_patterns}: {len(df):,} "
+            f"(excluded {excluded_count:,})"
+        )
 
     # Tiingo supported_tickers usually does not include company names, so this
     # filter can legitimately remove zero rows for now. It is kept for future
     # enrichment when company_name is available.
-    exclusion_regex = build_exclusion_regex(exclude_name_patterns)
+    name_exclusion_regex = build_literal_regex(exclude_name_patterns)
 
-    if exclusion_regex is not None:
+    if name_exclusion_regex is not None:
         company_name = df["company_name"].fillna("")
-        exclude_mask = company_name.str.contains(exclusion_regex, regex=True)
+        exclude_mask = company_name.str.contains(name_exclusion_regex, regex=True)
         excluded_count = int(exclude_mask.sum())
         df = df[~exclude_mask].copy()
         print(
@@ -227,7 +254,8 @@ def build_candidate_pool(
         "asset_type_in_config;"
         "currency_in_config;"
         "major_us_exchange;"
-        "overlaps_requested_backfill_window"
+        "overlaps_requested_backfill_window;"
+        "ticker_pattern_not_excluded"
     )
     df["loaded_at"] = now_utc
 
@@ -251,14 +279,14 @@ def build_candidate_pool(
     output = output.drop_duplicates(subset=["security_id"], keep="first").copy()
     output = output.sort_values(["ticker", "security_id"]).reset_index(drop=True)
 
+    if output.empty:
+        raise ValueError("candidate pool is empty after filtering.")
+
     if output["security_id"].isna().any():
         raise ValueError("candidate pool contains null security_id.")
 
     if output["ticker"].isna().any() or (output["ticker"] == "").any():
         raise ValueError("candidate pool contains null or empty ticker.")
-
-    if output.empty:
-        raise ValueError("candidate pool is empty after filtering.")
 
     return output
 
