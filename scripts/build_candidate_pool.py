@@ -129,6 +129,13 @@ def build_candidate_pool(
         [],
     )
 
+    exclude_tickers_containing_hyphen = bool(
+    config["candidate_filters"].get(
+        "exclude_tickers_containing_hyphen",
+        True,
+    )
+    )
+
     candidate_pool_name = str(
         config.get("candidate_pool", {}).get(
             "output_name",
@@ -216,6 +223,15 @@ def build_candidate_pool(
         df,
     )
 
+    if exclude_tickers_containing_hyphen:
+        before = len(df)
+        df = df[~df["ticker"].str.contains("-", regex=False, na=False)].copy()
+        print(
+            "After excluding tickers containing '-': "
+            f"{len(df):,} "
+            f"(excluded {before - len(df):,})"
+        )
+
     # Exclude obvious rights, warrants, and units using ticker suffix patterns.
     # Examples: UTF-R, STR-WS, VYX-W.
     ticker_exclusion_regex = build_raw_regex(exclude_ticker_patterns)
@@ -251,11 +267,12 @@ def build_candidate_pool(
 
     df["candidate_pool_name"] = candidate_pool_name
     df["candidate_reason"] = (
-        "asset_type_in_config;"
-        "currency_in_config;"
-        "major_us_exchange;"
-        "overlaps_requested_backfill_window;"
-        "ticker_pattern_not_excluded"
+    "asset_type_in_config;"
+    "currency_in_config;"
+    "major_us_exchange;"
+    "overlaps_requested_backfill_window;"
+    "hyphen_ticker_excluded;"
+    "ticker_pattern_not_excluded"
     )
     df["loaded_at"] = now_utc
 

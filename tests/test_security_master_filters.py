@@ -201,6 +201,7 @@ def test_candidate_pool_filters_to_us_common_stock_candidates() -> None:
                 "-P-[A-Z]$",
                 "-P[A-Z]$",
             ],
+            "exclude_tickers_containing_hyphen": True,
         },
         "candidate_pool": {"output_name": "us_common_stock_candidates"},
     }
@@ -211,7 +212,7 @@ def test_candidate_pool_filters_to_us_common_stock_candidates() -> None:
 
     assert "AAPL" in tickers
     assert "NEW1" in tickers
-    assert "BRK-B" in tickers
+    assert "BRK-B" not in tickers
 
     assert "ETF1" not in tickers
     assert "CAD1" not in tickers
