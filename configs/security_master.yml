@@ -29,6 +29,8 @@ candidate_filters:
   require_active_or_valid_after_research_start: true
   min_start_date: "2020-01-01"
 
+  exclude_tickers_containing_hyphen: true
+
   exclude_name_patterns:
     - ETF
     - ETN
@@ -40,6 +42,17 @@ candidate_filters:
     - Preferred
     - Notes
     - Bond
+
+  exclude_ticker_patterns:
+    - "-R$"
+    - "-RT$"
+    - "-WS$"
+    - "-W$"
+    - "-WT$"
+    - "-U$"
+    - "-UN$" 
+    - "-P-[A-Z]$"
+    - "-P[A-Z]$"
 
 candidate_pool:
   output_name: us_common_stock_candidates

@@ -1,0 +1,68 @@
+backfill:
+  source: tiingo
+  dataset: equity_price_daily
+  default_task_list_name: pilot_500
+
+task_lists:
+  pilot_500:
+    local_path: "data/dwd/security_master/backfill_task_list_pilot_500.parquet"
+    expected_min_rows: 1
+    expected_max_rows: 500
+    description: "Engineering pilot list for testing the Tiingo backfill engine."
+
+  bootstrap_candidates:
+    local_path: "data/dwd/security_master/backfill_task_list_bootstrap_candidates.parquet"
+    expected_min_rows: 1
+    expected_max_rows: null
+    description: "Full candidate task list for paid-month bootstrap backfill."
+
+tiingo:
+  request_timeout_seconds: 60
+  max_retries: 3
+  retry_sleep_seconds: 10
+  sleep_seconds_between_requests: 0.25
+
+execution:
+  resume: true
+  max_attempts_per_symbol: 3
+  reset_stale_running_after_minutes: 180
+  default_limit: null
+
+local_paths:
+  ods_root: "data/ods/source=tiingo/dataset=equity_price_daily"
+  dwd_final_root: "data/dwd/equity_price_daily"
+  dwd_tmp_root: "data/_tmp/dwd/equity_price_daily"
+  audit_report_root: "reports/backfill_audit"
+
+gcs:
+  sync_to_gcs: true
+  ods_prefix: "ods/source=tiingo/dataset=equity_price_daily"
+  dwd_prefix: "dwd/equity_price_daily"
+  audit_report_prefix: "reports/backfill_audit"
+
+dwd_transform:
+  mode: "rebuild_from_scope"
+  use_temp_output: true
+  clean_temp_before_run: true
+  replace_target_after_validation: true
+
+validation:
+  required_task_list_columns:
+    - task_id
+    - task_list_name
+    - source
+    - dataset_name
+    - security_id
+    - ticker
+    - requested_start_date
+    - requested_end_date
+    - priority
+    - status
+    - created_at
+
+  allowed_task_statuses:
+    - pending
+    - running
+    - success
+    - failed
+    - skipped
