@@ -53,6 +53,12 @@ candidate_filters:
     - "-UN$" 
     - "-P-[A-Z]$"
     - "-P[A-Z]$"
+    - "^[A-Z]{4}U$"
+    - "^[A-Z]{4}W$"
+    - "^[A-Z]{4}R$"
+    - "^[A-Z]{3,5}WS$"
+    - "^[A-Z]{3,5}WT$"
+    - "^[A-Z]{3,5}WW$"
 
 candidate_pool:
   output_name: us_common_stock_candidates

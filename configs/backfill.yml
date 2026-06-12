@@ -66,3 +66,7 @@ validation:
     - success
     - failed
     - skipped
+
+bootstrap:
+  requested_start_date: "2019-01-01"
+  requested_end_date: "2026-06-11"
