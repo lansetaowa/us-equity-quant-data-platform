@@ -59,6 +59,7 @@ candidate_filters:
     - "^[A-Z]{3,5}WS$"
     - "^[A-Z]{3,5}WT$"
     - "^[A-Z]{3,5}WW$"
+    - "/"
 
 candidate_pool:
   output_name: us_common_stock_candidates
