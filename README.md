@@ -112,6 +112,33 @@ BigQuery Metadata:
 
 ## Current Scope
 
+### Week 8 scope:
+- refreshed Tiingo supported_tickers snapshot
+- rebuilt canonical dim_security with duplicate ticker resolution
+- rebuilt candidate pool with hyphen/slash/unit/warrant filters
+- froze formal bootstrap window to 2019-01-01 → 2026-06-11
+- initialized bootstrap_candidates metadata
+- downloaded formal bootstrap ODS
+- transformed successful bootstrap raw data to formal DWD
+- replaced GCS DWD price prefix
+- loaded BigQuery dwd_equity_price_daily
+- validated local vs BigQuery counts
+
+Important results:
+- bootstrap task count: 8679
+- success: 8661
+- skipped: 18
+- failed: 0 after reclassifying slash preferred tickers
+- final DWD has no pilot-only tickers
+- duplicate security_id/date count: 0
+- BigQuery table partitioned by date and clustered by ticker/security_id
+
+Known decisions:
+- old pilot_500 remains an engineering artifact
+- formal baseline is bootstrap_candidates only
+- June 11 is the frozen bootstrap anchor
+- post-June-11 updates will be handled by Week 8.5 windowed gap-fill
+
 ### Week 7: Pilot Tiingo Backfill Engine
 
 Week 7 adds the pilot Tiingo backfill engine using the `pilot_500` task list. The goal is to validate the end-to-end backfill workflow before running the full paid-month bootstrap.
