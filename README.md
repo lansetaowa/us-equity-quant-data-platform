@@ -112,6 +112,17 @@ BigQuery Metadata:
 
 ## Current Scope
 
+### Week 8.5 — Windowed Price Gap-Fill
+
+Week 8.5 adds the foundation for safe daily Tiingo price updates.
+
+The Week 8 bootstrap remains frozen at `2019-01-01 -> 2026-06-11`. New incremental raw price files use request-windowed paths such as:
+
+```text
+data/ods/source=tiingo/dataset=equity_price_daily/
+  symbol=AAPL/
+    request_start=2026-06-12/request_end=2026-06-12/prices.json
+```
 ### Week 8 scope:
 - refreshed Tiingo supported_tickers snapshot
 - rebuilt canonical dim_security with duplicate ticker resolution

@@ -1,0 +1,34 @@
+# configs/price_update.yml
+
+price_update:
+  source: "tiingo"
+  dataset_name: "equity_price_daily"
+
+  # Week 8 formal bootstrap is frozen through this date.
+  # Do not regenerate or mutate the Week 8 bootstrap task list.
+  bootstrap_anchor_date: "2026-06-11"
+
+  # Optional manual override for controlled testing.
+  # Normal daily operation should leave this as null.
+  #
+  # Example:
+  # latest_complete_eod_date: "2026-06-12"
+  latest_complete_eod_date: null
+
+  eod_resolution:
+    market_calendar: "XNYS"
+    market_timezone: "America/New_York"
+
+    # Do not treat today's EOD as complete immediately at market close.
+    # 90 minutes means 5:30 PM New York time for a regular 4:00 PM close.
+    market_close_buffer_minutes: 90
+
+  raw_window_layout:
+    filename: "prices.json"
+
+  legacy_raw_layout:
+    # Temporary compatibility: transform can read old Week 8 bootstrap raw files.
+    read_enabled: true
+
+    # New incremental downloads must never write to legacy aapl_prices.json paths.
+    write_enabled: false
