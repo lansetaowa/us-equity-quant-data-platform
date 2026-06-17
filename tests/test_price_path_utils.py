@@ -2,11 +2,12 @@ from pathlib import Path
 
 import pytest
 
-from scripts.price_path_utils import (
+from quant_platform.paths.price_paths import (
     build_legacy_price_raw_path,
     build_price_dataset_root,
     build_windowed_price_raw_path,
     normalize_ticker,
+    strip_local_data_prefix_for_gcs,
     to_gcs_object_path,
 )
 
@@ -99,6 +100,20 @@ def test_to_gcs_object_path_strips_local_data_prefix():
     )
 
     assert to_gcs_object_path(local_path) == (
+        "ods/source=tiingo/dataset=equity_price_daily/"
+        "symbol=AAPL/request_start=2026-06-12/"
+        "request_end=2026-06-12/prices.json"
+    )
+
+
+def test_backward_compatible_gcs_prefix_alias():
+    local_path = Path(
+        "data/ods/source=tiingo/dataset=equity_price_daily/"
+        "symbol=AAPL/request_start=2026-06-12/"
+        "request_end=2026-06-12/prices.json"
+    )
+
+    assert strip_local_data_prefix_for_gcs(local_path) == (
         "ods/source=tiingo/dataset=equity_price_daily/"
         "symbol=AAPL/request_start=2026-06-12/"
         "request_end=2026-06-12/prices.json"

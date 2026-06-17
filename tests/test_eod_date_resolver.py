@@ -3,7 +3,7 @@ from zoneinfo import ZoneInfo
 
 import pytest
 
-from scripts.eod_date_resolver import (
+from quant_platform.calendar.eod import (
     EodResolutionConfig,
     latest_complete_eod_by_calendar,
     resolve_latest_complete_eod_date,
@@ -64,7 +64,7 @@ def test_regular_trading_day_after_buffer_uses_today():
 
 def test_weekend_uses_previous_session():
     resolved = latest_complete_eod_by_calendar(
-        now=datetime(2026, 6, 14, 12, 0, tzinfo=NY),  # Sunday
+        now=datetime(2026, 6, 14, 12, 0, tzinfo=NY),
         market_calendar="XNYS",
         market_timezone="America/New_York",
         market_close_buffer_minutes=90,
@@ -81,7 +81,6 @@ def test_xnys_holiday_uses_previous_session():
         market_close_buffer_minutes=90,
     )
 
-    # July 3, 2026 is observed Independence Day market holiday.
     assert resolved.isoformat() == "2026-07-02"
 
 
@@ -93,8 +92,6 @@ def test_early_close_after_buffer_uses_same_session():
         market_close_buffer_minutes=90,
     )
 
-    # Day after Thanksgiving is typically an early close.
-    # XNYS calendar should provide the actual close time.
     assert resolved.isoformat() == "2026-11-27"
 
 
