@@ -32,3 +32,10 @@ price_update:
 
     # New incremental downloads must never write to legacy aapl_prices.json paths.
     write_enabled: false
+
+  daily_update_universe:
+    # The bootstrap universe is historical. Daily updates should only target
+    # active or plausibly active symbols.
+    #
+    # A small grace window protects against supported_tickers snapshot lag.
+    active_end_date_grace_days: 7
