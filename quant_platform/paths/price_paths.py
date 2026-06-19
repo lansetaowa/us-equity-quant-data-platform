@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from quant_platform.paths.data_lake import to_gcs_object_path
+
 
 SOURCE = "tiingo"
 DATASET_NAME = "equity_price_daily"
@@ -86,25 +88,6 @@ def build_windowed_price_raw_path(
     )
 
 
-def to_gcs_object_path(local_path: str | Path) -> str:
-    """
-    Convert local data lake path to GCS object-relative path.
-
-    Example:
-    data/ods/source=tiingo/... -> ods/source=tiingo/...
-
-    This preserves the Week 8 convention that local `data/` should not become
-    part of the GCS object prefix.
-    """
-    path = Path(local_path)
-
-    if path.parts and path.parts[0] == "data":
-        path = Path(*path.parts[1:])
-
-    return path.as_posix()
-
-
-# Backward-compatible alias for earlier Day 1 naming.
 def strip_local_data_prefix_for_gcs(local_path: str | Path) -> str:
     """Backward-compatible alias for to_gcs_object_path."""
     return to_gcs_object_path(local_path)

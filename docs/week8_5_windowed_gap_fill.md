@@ -22,3 +22,21 @@ Refactor decision:
   active/plausibly active API update universe
 
 This turns the dry-run discovery into a formal design decision.
+
+## Daily update universe
+
+The formal Week 8 bootstrap universe is historical and may contain delisted or inactive symbols. It should not be used directly as the daily API update universe.
+
+Daily gap-fill tasks now use an active/plausibly active filter from `dim_security`:
+
+```text
+eligible if is_active is true
+or end_date is null
+or end_date >= bootstrap_anchor_date - active_end_date_grace_days
+```
+
+The default grace period is configured in configs/price_update.yml:
+```
+daily_update_universe:
+  active_end_date_grace_days: 7
+  ```

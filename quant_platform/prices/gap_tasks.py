@@ -4,29 +4,37 @@ import argparse
 from dataclasses import dataclass
 from datetime import date, timedelta
 from pathlib import Path
-from typing import Any
 
 import duckdb
 import pandas as pd
-import yaml
 
 from quant_platform.calendar.eod import (
     EodResolutionConfig,
     resolve_latest_complete_eod_date,
 )
-
-
-DEFAULT_CONFIG_PATH = Path("configs/price_update.yml")
-DEFAULT_BOOTSTRAP_TASK_LIST_PATH = Path(
-    "data/dwd/security_master/backfill_task_list_bootstrap_candidates.parquet"
+from quant_platform.config.loaders import (
+    load_yaml,
+    optional_mapping,
+    parse_iso_date,
+    require_mapping,
+    require_value,
 )
-DEFAULT_DIM_SECURITY_PATH = Path("data/dwd/security_master/dim_security.parquet")
-DEFAULT_DWD_PRICE_ROOT = Path("data/dwd/equity_price_daily")
-DEFAULT_OUTPUT_PATH = Path("data/dwd/security_master/price_gap_task_list.parquet")
-DEFAULT_EXCLUDED_OUTPUT_PATH = Path(
-    "data/dwd/security_master/price_gap_excluded_symbols.parquet"
+from quant_platform.paths.data_lake import (
+    BOOTSTRAP_CANDIDATES_TASK_LIST_PATH,
+    DIM_SECURITY_PATH,
+    DWD_PRICE_ROOT,
+    PRICE_GAP_EXCLUDED_SYMBOLS_PATH,
+    PRICE_GAP_TASK_LIST_PATH,
+    PRICE_UPDATE_CONFIG_PATH,
+    ensure_parent_dir,
 )
 
+DEFAULT_CONFIG_PATH = PRICE_UPDATE_CONFIG_PATH
+DEFAULT_BOOTSTRAP_TASK_LIST_PATH = BOOTSTRAP_CANDIDATES_TASK_LIST_PATH
+DEFAULT_DIM_SECURITY_PATH = DIM_SECURITY_PATH
+DEFAULT_DWD_PRICE_ROOT = DWD_PRICE_ROOT
+DEFAULT_OUTPUT_PATH = PRICE_GAP_TASK_LIST_PATH
+DEFAULT_EXCLUDED_OUTPUT_PATH = PRICE_GAP_EXCLUDED_SYMBOLS_PATH
 
 @dataclass(frozen=True)
 class PriceGapTaskConfig:
@@ -41,30 +49,13 @@ class PriceGapTaskConfig:
     excluded_output_path: Path
     active_end_date_grace_days: int
 
-
-def parse_iso_date(value: str | date) -> date:
-    if isinstance(value, date):
-        return value
-
-    return date.fromisoformat(str(value).strip())
-
-
-def load_yaml(path: Path) -> dict[str, Any]:
-    if not path.exists():
-        raise FileNotFoundError(f"Config file not found: {path}")
-
-    with path.open("r", encoding="utf-8") as f:
-        data = yaml.safe_load(f)
-
-    if not isinstance(data, dict):
-        raise ValueError(f"Config file must contain a YAML mapping: {path}")
-
-    return data
-
-
-def build_eod_resolution_config(config_data: dict[str, Any]) -> EodResolutionConfig:
-    price_update = config_data.get("price_update", {})
-    eod_resolution = price_update.get("eod_resolution", {})
+def build_eod_resolution_config(config_data: dict) -> EodResolutionConfig:
+    price_update = require_mapping(config_data, "price_update")
+    eod_resolution = optional_mapping(
+        price_update,
+        "eod_resolution",
+        context="price_update",
+    )
 
     return EodResolutionConfig(
         manual_latest_complete_eod_date=price_update.get(
@@ -80,7 +71,6 @@ def build_eod_resolution_config(config_data: dict[str, Any]) -> EodResolutionCon
         ),
     )
 
-
 def load_price_gap_task_config(
     config_path: Path,
     bootstrap_task_list_path: Path,
@@ -91,18 +81,24 @@ def load_price_gap_task_config(
 ) -> PriceGapTaskConfig:
     config_data = load_yaml(config_path)
 
-    price_update = config_data.get("price_update")
-    if not isinstance(price_update, dict):
-        raise ValueError("Config must contain a 'price_update' mapping")
+    price_update = require_mapping(config_data, "price_update")
+    daily_update_universe = optional_mapping(
+        price_update,
+        "daily_update_universe",
+        context="price_update",
+    )
 
-    source = str(price_update.get("source", "tiingo"))
-    dataset_name = str(price_update.get("dataset_name", "equity_price_daily"))
+    source = str(price_update.get("source", "tiingo")).strip()
+    dataset_name = str(
+        price_update.get("dataset_name", "equity_price_daily")
+    ).strip()
 
-    bootstrap_anchor_raw = price_update.get("bootstrap_anchor_date")
-    if not bootstrap_anchor_raw:
-        raise ValueError("price_update.bootstrap_anchor_date is required")
+    bootstrap_anchor_raw = require_value(
+        price_update,
+        "bootstrap_anchor_date",
+        context="price_update",
+    )
 
-    daily_update_universe = price_update.get("daily_update_universe") or {}
     active_end_date_grace_days = int(
         daily_update_universe.get("active_end_date_grace_days", 7)
     )
@@ -125,7 +121,6 @@ def load_price_gap_task_config(
         excluded_output_path=excluded_output_path,
         active_end_date_grace_days=active_end_date_grace_days,
     )
-
 
 def _standardize_symbol_keys(df: pd.DataFrame) -> pd.DataFrame:
     required_columns = {"ticker", "security_id"}
@@ -199,7 +194,6 @@ def _truthy_series(series: pd.Series) -> pd.Series:
         ["true", "1", "yes", "y"]
     )
 
-
 def attach_daily_update_eligibility(
     bootstrap_tasks: pd.DataFrame,
     dim_security: pd.DataFrame,
@@ -223,7 +217,10 @@ def attach_daily_update_eligibility(
     if active_end_date_grace_days < 0:
         raise ValueError("active_end_date_grace_days must be >= 0")
 
-    bootstrap = _standardize_symbol_keys(bootstrap_tasks)
+    bootstrap = _standardize_symbol_keys(bootstrap_tasks)[
+        ["ticker", "security_id"]
+    ].drop_duplicates()
+
     security = _standardize_symbol_keys(dim_security)
 
     if "end_date" not in security.columns:
@@ -290,7 +287,6 @@ def attach_daily_update_eligibility(
     merged["end_date"] = end_date_ts.dt.date
 
     return merged.drop(columns=["_merge"])
-
 
 def _empty_latest_dwd_dates() -> pd.DataFrame:
     return pd.DataFrame(columns=["ticker", "security_id", "latest_dwd_date"])
@@ -431,11 +427,9 @@ def build_price_gap_tasks(
 
     return tasks.reset_index(drop=True)
 
-
 def save_frame(df: pd.DataFrame, output_path: Path) -> None:
-    output_path.parent.mkdir(parents=True, exist_ok=True)
+    ensure_parent_dir(output_path)
     df.to_parquet(output_path, index=False)
-
 
 def print_summary(
     tasks: pd.DataFrame,

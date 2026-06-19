@@ -341,3 +341,35 @@ def test_attach_daily_update_eligibility_rejects_negative_grace_days():
             bootstrap_anchor_date=date(2026, 6, 11),
             active_end_date_grace_days=-1,
         )
+
+def test_attach_daily_update_eligibility_uses_dim_security_end_date_only():
+    bootstrap = pd.DataFrame(
+        {
+            "ticker": ["AAPL"],
+            "security_id": ["tiingo:AAPL"],
+            # This column can exist in task-list-like inputs.
+            # Eligibility should use dim_security.end_date, not this value.
+            "end_date": [date(2020, 1, 1)],
+        }
+    )
+
+    dim_security = pd.DataFrame(
+        {
+            "ticker": ["AAPL"],
+            "security_id": ["tiingo:AAPL"],
+            "end_date": [date(2026, 6, 11)],
+            "is_active": [False],
+        }
+    )
+
+    result = attach_daily_update_eligibility(
+        bootstrap_tasks=bootstrap,
+        dim_security=dim_security,
+        bootstrap_anchor_date=date(2026, 6, 11),
+        active_end_date_grace_days=7,
+    )
+
+    assert bool(result.loc[0, "eligible_for_daily_update"])
+    assert result.loc[0, "end_date"] == date(2026, 6, 11)
+    assert "end_date_x" not in result.columns
+    assert "end_date_y" not in result.columns
