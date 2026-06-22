@@ -6,7 +6,7 @@ from pathlib import Path
 import duckdb
 
 
-PROJECT_ROOT = Path(__file__).resolve().parents[1]
+PROJECT_ROOT = Path(__file__).resolve().parents[2]
 DEFAULT_SECURITY_MASTER_PATH = (
     PROJECT_ROOT / "data" / "dwd" / "security_master" / "dim_security.parquet"
 )

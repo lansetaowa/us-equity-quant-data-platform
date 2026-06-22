@@ -1,29 +1,41 @@
+"""Legacy Week 3 demo pipeline.
+
+This module is retained for historical reference and is not the current
+production daily-price workflow.
+"""
+
 from __future__ import annotations
 
-from datetime import date
-from pathlib import Path
 import traceback
 import uuid
+from datetime import date
+from pathlib import Path
 
 import yaml
 
-from scripts.data_quality_checks import run_price_quality_checks
-from scripts.ingest_tiingo_prices import ingest_tiingo_prices
-from scripts.metadata_utils import (
+from scripts.legacy.data_quality_checks import (
+    run_price_quality_checks,
+)
+from scripts.legacy.ingest_tiingo_prices import (
+    ingest_tiingo_prices,
+)
+from scripts.legacy.metadata_utils import (
     log_pipeline_failed,
     log_pipeline_started,
     log_pipeline_success,
 )
-from scripts.pipeline_state import (
+from scripts.legacy.pipeline_state import (
     compute_refresh_window,
     get_last_successful_data_end_date,
 )
+from scripts.legacy.transform_tiingo_prices_to_dwd import (
+    transform_tiingo_prices_to_dwd,
+)
 from scripts.sync_data_to_gcs import sync_data_to_gcs
-from scripts.transform_tiingo_prices_to_dwd import transform_tiingo_prices_to_dwd
 
 
-UNIVERSE_CONFIG_PATH = Path("configs/universe.yml")
-PIPELINE_CONFIG_PATH = Path("configs/pipeline.yml")
+UNIVERSE_CONFIG_PATH = Path("configs/legacy/universe.yml")
+PIPELINE_CONFIG_PATH = Path("configs/legacy/pipeline.yml")
 PIPELINE_NAME = "daily_price_pipeline"
 PARQUET_GLOB = "data/dwd/equity_price_daily/**/part-*.parquet"
 

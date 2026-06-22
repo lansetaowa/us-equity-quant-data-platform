@@ -1,4 +1,4 @@
-from scripts.create_sample_prices import build_sample_prices
+from scripts.legacy.create_sample_prices import build_sample_prices
 
 
 def test_sample_prices_schema() -> None:

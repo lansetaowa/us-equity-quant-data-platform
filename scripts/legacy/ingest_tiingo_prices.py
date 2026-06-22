@@ -12,7 +12,7 @@ import requests
 import yaml
 
 
-CONFIG_PATH = Path("configs/universe.yml")
+CONFIG_PATH = Path("configs/legacy/universe.yml")
 ODS_ROOT = Path("data/ods/source=tiingo/dataset=equity_price_daily")
 
 
