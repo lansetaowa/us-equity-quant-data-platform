@@ -11,7 +11,7 @@ def main() -> None:
 
     if not list(parquet_root.rglob("*.parquet")):
         raise FileNotFoundError(
-            "No Parquet files found. Run: python scripts/create_sample_prices.py"
+            "No Parquet files found. Run: python -m scripts.legacy.create_sample_prices"
         )
 
     con = duckdb.connect()

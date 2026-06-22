@@ -11,7 +11,7 @@ def main() -> None:
 
     if not list(parquet_root.rglob("*.parquet")):
         raise FileNotFoundError(
-            "No DWD Parquet files found. Run transform_tiingo_prices_to_dwd.py first."
+            "No DWD Parquet files found. Run python -m scripts.legacy.transform_tiingo_prices_to_dwd first."
         )
 
     con = duckdb.connect()

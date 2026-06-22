@@ -2,7 +2,7 @@ from datetime import date
 
 import pytest
 
-from scripts.pipeline_state import compute_refresh_window
+from scripts.legacy.pipeline_state import compute_refresh_window
 
 
 def test_compute_refresh_window_backfill() -> None:

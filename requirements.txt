@@ -13,3 +13,4 @@ dbt-duckdb
 dbt-bigquery
 google-cloud-bigquery
 google-cloud-bigquery-storage
+pandas-market-calendars

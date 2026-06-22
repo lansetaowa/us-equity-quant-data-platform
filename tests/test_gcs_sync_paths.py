@@ -1,9 +1,13 @@
 from pathlib import Path
 
-from scripts.sync_data_to_gcs import gcs_object_name_from_local_path
+import pytest
+
+from quant_platform.storage.gcs_sync import (
+    gcs_object_name_from_local_path,
+)
 
 
-def test_gcs_object_name_strips_local_data_prefix_for_ods() -> None:
+def test_gcs_object_name_strips_local_data_prefix_for_ods():
     local_path = Path(
         "data/ods/source=tiingo/dataset=equity_price_daily/"
         "symbol=AAPL/aapl_prices.json"
@@ -17,24 +21,39 @@ def test_gcs_object_name_strips_local_data_prefix_for_ods() -> None:
     )
 
 
-def test_gcs_object_name_strips_local_data_prefix_for_dwd() -> None:
+def test_gcs_object_name_supports_windowed_ods_path():
     local_path = Path(
-        "data/dwd/equity_price_daily/year=2025/month=01/part-000.parquet"
+        "data/ods/source=tiingo/dataset=equity_price_daily/"
+        "symbol=AAPL/request_start=2026-06-12/"
+        "request_end=2026-06-12/prices.json"
     )
 
     object_name = gcs_object_name_from_local_path(local_path)
 
     assert object_name == (
-        "dwd/equity_price_daily/year=2025/month=01/part-000.parquet"
+        "ods/source=tiingo/dataset=equity_price_daily/"
+        "symbol=AAPL/request_start=2026-06-12/"
+        "request_end=2026-06-12/prices.json"
     )
 
 
-def test_gcs_object_name_rejects_non_data_path() -> None:
-    local_path = Path("README.md")
+def test_gcs_object_name_strips_local_data_prefix_for_dwd():
+    local_path = Path(
+        "data/dwd/equity_price_daily/"
+        "year=2025/month=01/part-000.parquet"
+    )
 
-    try:
-        gcs_object_name_from_local_path(local_path)
-    except ValueError as exc:
-        assert "Local file must be under" in str(exc)
-    else:
-        raise AssertionError("Expected ValueError for path outside data/")
+    object_name = gcs_object_name_from_local_path(local_path)
+
+    assert object_name == (
+        "dwd/equity_price_daily/"
+        "year=2025/month=01/part-000.parquet"
+    )
+
+
+def test_gcs_object_name_rejects_non_data_path():
+    with pytest.raises(
+        ValueError,
+        match="Local file must be under",
+    ):
+        gcs_object_name_from_local_path(Path("README.md"))

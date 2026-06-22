@@ -8,10 +8,8 @@ import uuid
 import pandas as pd
 import yaml
 
-# from scripts.metadata_utils import log_pipeline_run
 
-
-CONFIG_PATH = Path("configs/universe.yml")
+CONFIG_PATH = Path("configs/legacy/universe.yml")
 ODS_ROOT = Path("data/ods/source=tiingo/dataset=equity_price_daily")
 DWD_ROOT = Path("data/dwd/equity_price_daily")
 
