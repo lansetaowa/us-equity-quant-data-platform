@@ -2,140 +2,167 @@ from __future__ import annotations
 
 import argparse
 import os
+from collections.abc import Iterable
 from pathlib import Path
-from typing import Iterable
+from typing import Any
 
 from dotenv import load_dotenv
 from google.cloud import storage
 
+from quant_platform.storage.gcs_sync import (
+    ALLOWED_SUFFIXES,
+    build_upload_plan,
+    execute_upload_plan,
+    gcs_object_name_from_local_path,
+    upload_file as upload_gcs_file,
+)
+
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
+ENV_PATH = PROJECT_ROOT / ".env"
+
 LOCAL_DATA_ROOT = PROJECT_ROOT / "data"
 
 DEFAULT_LOCAL_ROOTS = [
-    PROJECT_ROOT / "data" / "ods" / "source=tiingo" / "dataset=equity_price_daily",
+    (
+        PROJECT_ROOT
+        / "data"
+        / "ods"
+        / "source=tiingo"
+        / "dataset=equity_price_daily"
+    ),
     PROJECT_ROOT / "data" / "dwd" / "equity_price_daily",
 ]
 
-ALLOWED_SUFFIXES = {".json", ".csv", ".parquet"}
-
-
-def gcs_object_name_from_local_path(
-    local_path: Path,
-    local_data_root: Path = LOCAL_DATA_ROOT,
-) -> str:
-    """
-    Convert a local data-lake path to a GCS object name.
-
-    Example:
-        data/ods/source=tiingo/file.json
-        -> ods/source=tiingo/file.json
-
-        data/dwd/equity_price_daily/year=2025/part-000.parquet
-        -> dwd/equity_price_daily/year=2025/part-000.parquet
-
-    The local 'data/' prefix should never appear in GCS.
-    """
-    path = Path(local_path)
-
-    if not path.is_absolute():
-        path = PROJECT_ROOT / path
-
-    path = path.resolve()
-    local_data_root = local_data_root.resolve()
-
-    try:
-        relative_path = path.relative_to(local_data_root)
-    except ValueError as exc:
-        raise ValueError(
-            f"Local file must be under {local_data_root}, got {path}"
-        ) from exc
-
-    return relative_path.as_posix()
-
 
 def upload_file(
-    bucket: storage.Bucket,
+    bucket: Any,
     local_path: Path,
     dry_run: bool = False,
 ) -> None:
-    """Upload one local data file to the corresponding GCS layer path."""
-    object_name = gcs_object_name_from_local_path(local_path)
+    """
+    Backward-compatible wrapper for the old script-level upload function.
+    """
+    object_name = gcs_object_name_from_local_path(
+        local_path=local_path,
+        local_data_root=LOCAL_DATA_ROOT,
+        project_root=PROJECT_ROOT,
+    )
 
     if dry_run:
-        print(f"[DRY RUN] Would upload {local_path} to gs://{bucket.name}/{object_name}")
+        print(
+            f"[DRY RUN] Would upload {local_path} "
+            f"to gs://{bucket.name}/{object_name}"
+        )
         return
 
-    blob = bucket.blob(object_name)
-    blob.upload_from_filename(str(local_path))
-    print(f"Uploaded {local_path} to gs://{bucket.name}/{object_name}")
+    uri = upload_gcs_file(
+        bucket=bucket,
+        local_path=local_path,
+        object_name=object_name,
+        local_data_root=LOCAL_DATA_ROOT,
+        project_root=PROJECT_ROOT,
+    )
 
-
-def iter_files_to_upload(local_roots: Iterable[Path]) -> Iterable[Path]:
-    """Yield allowed files under configured local roots."""
-    for root in local_roots:
-        root = Path(root)
-
-        if not root.is_absolute():
-            root = PROJECT_ROOT / root
-
-        if not root.exists():
-            print(f"Skipping missing root: {root}")
-            continue
-
-        for file_path in root.rglob("*"):
-            if file_path.is_file() and file_path.suffix in ALLOWED_SUFFIXES:
-                yield file_path
+    print(f"Uploaded {local_path} to {uri}")
 
 
 def sync_data_to_gcs(
     local_roots: Iterable[Path] | None = None,
     dry_run: bool = False,
-) -> None:
+) -> int:
     """
     Sync selected local data-lake files to GCS.
 
-    Local paths keep the local 'data/' prefix.
-    GCS object names intentionally strip that prefix.
+    In dry-run mode, credentials are not loaded and no GCP client is created.
     """
-    load_dotenv()
+    roots = (
+        list(local_roots)
+        if local_roots is not None
+        else DEFAULT_LOCAL_ROOTS
+    )
 
-    bucket_name = os.environ.get("GCS_BUCKET")
-    project_id = os.environ.get("GCP_PROJECT_ID")
+    upload_plan = build_upload_plan(
+        local_roots=roots,
+        local_data_root=LOCAL_DATA_ROOT,
+        allowed_suffixes=ALLOWED_SUFFIXES,
+        project_root=PROJECT_ROOT,
+    )
+
+    if dry_run:
+        for item in upload_plan:
+            print(
+                "[DRY RUN] Would upload "
+                f"{item.local_path} to "
+                f"gs://<configured-bucket>/{item.object_name}"
+            )
+
+        print(f"[DRY RUN] Planned uploads: {len(upload_plan)}")
+        return len(upload_plan)
+
+    load_dotenv(dotenv_path=ENV_PATH)
+
+    bucket_name = os.getenv("GCS_BUCKET")
+    project_id = os.getenv("GCP_PROJECT_ID")
 
     if not bucket_name:
-        raise RuntimeError("GCS_BUCKET is missing. Check your .env file.")
+        raise RuntimeError(
+            "GCS_BUCKET is missing. Check your .env file."
+        )
 
     if not project_id:
-        raise RuntimeError("GCP_PROJECT_ID is missing. Check your .env file.")
+        raise RuntimeError(
+            "GCP_PROJECT_ID is missing. Check your .env file."
+        )
 
     client = storage.Client(project=project_id)
     bucket = client.bucket(bucket_name)
 
-    roots = list(local_roots) if local_roots is not None else DEFAULT_LOCAL_ROOTS
+    uploaded_uris = execute_upload_plan(
+        bucket=bucket,
+        upload_plan=upload_plan,
+    )
 
-    uploaded_count = 0
+    for uri in uploaded_uris:
+        print(f"Uploaded: {uri}")
 
-    for file_path in iter_files_to_upload(roots):
-        upload_file(bucket=bucket, local_path=file_path, dry_run=dry_run)
-        uploaded_count += 1
+    print(f"Uploaded files: {len(uploaded_uris)}")
 
-    if dry_run:
-        print(f"[DRY RUN] Planned uploads: {uploaded_count}")
-    else:
-        print(f"Uploaded files: {uploaded_count}")
+    return len(uploaded_uris)
 
 
-def main() -> None:
-    parser = argparse.ArgumentParser(description="Sync local data files to GCS.")
+def parse_args() -> argparse.Namespace:
+    parser = argparse.ArgumentParser(
+        description="Sync local data files to GCS."
+    )
+
     parser.add_argument(
         "--dry-run",
         action="store_true",
         help="Print planned uploads without uploading files.",
     )
-    args = parser.parse_args()
 
-    sync_data_to_gcs(dry_run=args.dry_run)
+    parser.add_argument(
+        "--local-root",
+        action="append",
+        type=Path,
+        default=None,
+        help=(
+            "Optional local file or directory to sync. "
+            "May be specified multiple times."
+        ),
+    )
+
+    return parser.parse_args()
+
+
+def main() -> None:
+    args = parse_args()
+
+    sync_data_to_gcs(
+        local_roots=args.local_root,
+        dry_run=args.dry_run,
+    )
 
 
 if __name__ == "__main__":

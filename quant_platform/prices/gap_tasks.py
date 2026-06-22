@@ -190,9 +190,9 @@ def load_dim_security(path: Path) -> pd.DataFrame:
 
 
 def _truthy_series(series: pd.Series) -> pd.Series:
-    return series.fillna(False).astype(str).str.strip().str.lower().isin(
-        ["true", "1", "yes", "y"]
-    )
+    normalized = series.astype("string").str.strip().str.lower()
+
+    return normalized.isin({"true", "1", "yes", "y"})
 
 def attach_daily_update_eligibility(
     bootstrap_tasks: pd.DataFrame,
