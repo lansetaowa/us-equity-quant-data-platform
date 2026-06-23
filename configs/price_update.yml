@@ -39,3 +39,9 @@ price_update:
     #
     # A small grace window protects against supported_tickers snapshot lag.
     active_end_date_grace_days: 7
+    
+  download:
+    request_timeout_seconds: 60
+    max_attempts: 3
+    retry_sleep_seconds: 10
+    sleep_seconds_between_requests: 0.25

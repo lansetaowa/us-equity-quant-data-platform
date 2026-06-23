@@ -24,6 +24,10 @@ PRICE_GAP_EXCLUDED_SYMBOLS_PATH = (
     SECURITY_MASTER_DWD_ROOT / "price_gap_excluded_symbols.parquet"
 )
 
+PRICE_UPDATE_DOWNLOAD_REPORT_ROOT = (
+    REPORTS_ROOT / "price_update_download"
+)
+
 
 def to_gcs_object_path(local_path: str | Path) -> str:
     """
