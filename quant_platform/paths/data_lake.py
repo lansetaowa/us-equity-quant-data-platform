@@ -28,6 +28,18 @@ PRICE_UPDATE_DOWNLOAD_REPORT_ROOT = (
     REPORTS_ROOT / "price_update_download"
 )
 
+DWD_PRICE_UPDATE_STAGING_ROOT = (
+    DATA_ROOT / "_tmp" / "dwd_price_update"
+)
+
+DWD_PRICE_UPDATE_ARCHIVE_ROOT = (
+    DATA_ROOT / "_archive" / "dwd_price_update"
+)
+
+PRICE_UPDATE_TRANSFORM_REPORT_ROOT = (
+    REPORTS_ROOT / "price_update_transform"
+)
+
 
 def to_gcs_object_path(local_path: str | Path) -> str:
     """

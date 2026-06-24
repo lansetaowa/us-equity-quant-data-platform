@@ -216,3 +216,24 @@ def test_write_year_month_partitions_uses_temp_directory(tmp_path):
     assert tuple(february_read.columns) == DWD_PRICE_COLUMNS
     assert january_read.loc[0, "ticker"] == "AAPL"
     assert february_read.loc[0, "ticker"] == "MSFT"
+
+def test_deduplicate_supports_mixed_loaded_at_formats():
+    earlier = make_frame(
+        close=100.0,
+        loaded_at="2026-06-12T21:00:00Z",
+    )
+
+    later = make_frame(
+        close=101.0,
+        loaded_at="2026-06-12T22:00:00.123456Z",
+    )
+
+    combined = pd.concat(
+        [earlier, later],
+        ignore_index=True,
+    )
+
+    result = deduplicate_dwd_price_frame(combined)
+
+    assert len(result) == 1
+    assert result.loc[0, "close"] == 101.0
