@@ -7,6 +7,8 @@ from typing import Any
 import pandas as pd
 import pytest
 
+from quant_platform.prices.download import run_price_download_tasks
+
 from quant_platform.clients.tiingo import (
     TiingoClientConfig,
 )
@@ -376,3 +378,32 @@ def test_build_price_download_plan(tmp_path):
 
     assert not bool(plan.loc[0, "file_exists"])
     assert bool(plan.loc[0, "would_call_api"])
+
+def test_run_price_download_tasks_calls_result_callback(tmp_path):
+    tasks = pd.DataFrame([make_task()])
+    callback_results: list[dict] = []
+
+    def fake_fetch(**kwargs):
+        return make_rows()
+
+    settings = PriceDownloadSettings()
+    ods_root = tmp_path / "data" / "ods"
+
+    client_config = TiingoClientConfig(
+        api_token="secret",
+        max_attempts=1,
+    )
+
+    results = run_price_download_tasks(
+        tasks,
+        client_config=client_config,
+        settings=settings,
+        ods_root=ods_root,
+        fetch_fn=fake_fetch,  # remove this line if your function does not expose fetch_fn
+        result_callback=callback_results.append,
+    )
+
+    assert len(results) == 1
+    assert len(callback_results) == 1
+    assert callback_results[0]["ticker"] == "AAPL"
+    assert callback_results[0]["status"] == "downloaded"

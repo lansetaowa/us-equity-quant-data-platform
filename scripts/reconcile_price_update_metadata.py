@@ -25,6 +25,13 @@ from quant_platform.paths.data_lake import (
 )
 from quant_platform.storage.local_json import write_json
 
+from quant_platform.metadata.price_update import (
+    export_price_update_window_results,
+)
+from quant_platform.paths.data_lake import (
+    PRICE_UPDATE_METADATA_EXPORT_ROOT,
+)
+
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 ENV_PATH = PROJECT_ROOT / ".env"
@@ -35,7 +42,19 @@ def parse_args() -> argparse.Namespace:
         description="Reconcile a completed price update into Postgres metadata."
     )
 
-    parser.add_argument("--download-report", type=Path, required=True)
+    parser.add_argument(
+        "--download-report",
+        type=Path,
+        default=None,
+        help="Legacy CSV bridge report.",
+    )
+
+    parser.add_argument(
+        "--run-id",
+        type=str,
+        default=None,
+        help="Postgres run_id to reconcile.",
+    )
     parser.add_argument("--transform-report-dir", type=Path, required=True)
     parser.add_argument("--audit-report-uri", type=str, default=None)
     parser.add_argument(
@@ -153,19 +172,51 @@ def _compare_metadata_to_report(
         if actual_rows != expected_rows:
             raise ValueError(f"{name} row count mismatch")
 
+def resolve_result_input(args: argparse.Namespace) -> Path:
+    """Return a CSV-compatible result file generated from the fact source."""
+    if bool(args.download_report) == bool(args.run_id):
+        raise ValueError(
+            "Specify exactly one of --download-report or --run-id"
+        )
+
+    if args.download_report is not None:
+        return args.download_report
+
+    load_dotenv(dotenv_path=ENV_PATH.resolve())
+
+    dsn = os.getenv("POSTGRES_DSN")
+    if not dsn:
+        raise RuntimeError("POSTGRES_DSN is missing from .env")
+
+    export_path = (
+        PRICE_UPDATE_METADATA_EXPORT_ROOT
+        / f"{args.run_id}.csv"
+    )
+
+    with psycopg.connect(dsn) as conn:
+        export_price_update_window_results(
+            conn,
+            run_id=args.run_id,
+            output_path=export_path,
+        )
+
+    return export_path
 
 def main() -> None:
     args = parse_args()
 
-    report = load_price_update_report(args.download_report)
+    result_input = resolve_result_input(args)
+    result_input = resolve_result_input(args)
+
+    report = load_price_update_report(result_input)
     artifacts = load_end_to_end_artifact_summary(args.transform_report_dir)
 
-    run_id = Path(args.download_report).stem
+    run_id = args.run_id or Path(result_input).stem
     audit_dir = args.audit_root / run_id
 
     summary = build_price_update_run_summary(
         report,
-        report_path=args.download_report,
+        report_path=result_input,
         artifact_summary=artifacts,
         audit_report_path=audit_dir,
     )

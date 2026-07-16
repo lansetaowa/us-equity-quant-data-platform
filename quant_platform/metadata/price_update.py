@@ -116,21 +116,16 @@ def _parse_boolean_series(series: pd.Series, column_name: str) -> pd.Series:
 
     return normalized.isin(true_values)
 
+def normalize_price_update_result_frame(report: pd.DataFrame) -> pd.DataFrame:
+    """Validate and normalize price-update result rows.
 
-def load_price_update_report(path: str | Path) -> pd.DataFrame:
-    """Load and validate the completed Day 3 download report."""
-    report_path = Path(path)
-
-    if not report_path.exists():
-        raise FileNotFoundError(
-            f"Price update report not found: {report_path}"
-        )
-
-    report = pd.read_csv(report_path)
-
+    This accepts either a CSV-loaded report or a DataFrame constructed from
+    Postgres results. In both cases, the resulting DataFrame uses the same
+    canonical columns and data types.
+    """
     missing = sorted(REPORT_REQUIRED_COLUMNS - set(report.columns))
     if missing:
-        raise ValueError(f"Price update report missing columns: {missing}")
+        raise ValueError(f"Price update results missing columns: {missing}")
 
     output = report.copy()
 
@@ -204,7 +199,7 @@ def load_price_update_report(path: str | Path) -> pd.DataFrame:
         keep=False,
     )
     if duplicate_windows.any():
-        raise ValueError("Report contains duplicate request windows")
+        raise ValueError("Results contain duplicate request windows")
 
     empty_actions = output["status"].isin({"empty", "existing_empty"})
     if output.loc[empty_actions, "row_count"].fillna(-1).ne(0).any():
@@ -223,7 +218,18 @@ def load_price_update_report(path: str | Path) -> pd.DataFrame:
     output["error_message"] = output["error_message"].map(_nullable_text)
 
     return output.sort_values(["ticker", "security_id"]).reset_index(drop=True)
+def load_price_update_report(path: str | Path) -> pd.DataFrame:
+    """Load and validate a completed Day 3 CSV bridge report."""
+    report_path = Path(path)
 
+    if not report_path.exists():
+        raise FileNotFoundError(
+            f"Price update report not found: {report_path}"
+        )
+
+    report = pd.read_csv(report_path)
+
+    return normalize_price_update_result_frame(report)
 
 def load_end_to_end_artifact_summary(
     transform_report_dir: str | Path,
@@ -750,6 +756,230 @@ def fetch_current_window_status_summary(
         ],
     )
 
+def start_price_update_pipeline_run(
+    conn: psycopg.Connection,
+    *,
+    run_id: str,
+    source: str,
+    dataset_name: str,
+    data_start_date: date,
+    data_end_date: date,
+    symbols_count: int,
+    notes: str | None = None,
+) -> None:
+    """Create or refresh a running daily price-update pipeline row."""
+    sql = """
+    INSERT INTO metadata.pipeline_runs (
+        run_id,
+        pipeline_name,
+        status,
+        started_at,
+        ended_at,
+        row_count,
+        notes,
+        source,
+        dataset,
+        mode,
+        data_start_date,
+        data_end_date,
+        symbols_count,
+        ods_records,
+        dwd_records,
+        metrics
+    )
+    VALUES (
+        %s,
+        'daily_price_update',
+        'running',
+        now(),
+        NULL,
+        0,
+        %s,
+        %s,
+        %s,
+        'windowed_incremental',
+        %s,
+        %s,
+        %s,
+        0,
+        0,
+        %s
+    )
+    ON CONFLICT (run_id)
+    DO UPDATE SET
+        pipeline_name = EXCLUDED.pipeline_name,
+        status = 'running',
+        started_at = COALESCE(
+            metadata.pipeline_runs.started_at,
+            EXCLUDED.started_at
+        ),
+        ended_at = NULL,
+        notes = EXCLUDED.notes,
+        source = EXCLUDED.source,
+        dataset = EXCLUDED.dataset,
+        mode = EXCLUDED.mode,
+        data_start_date = EXCLUDED.data_start_date,
+        data_end_date = EXCLUDED.data_end_date,
+        symbols_count = EXCLUDED.symbols_count,
+        metrics = EXCLUDED.metrics;
+    """
+
+    metrics = {
+        "current_stage": "download_running",
+        "planned_task_count": int(symbols_count),
+    }
+
+    with conn.cursor() as cur:
+        cur.execute(
+            sql,
+            (
+                run_id,
+                notes,
+                source,
+                dataset_name,
+                data_start_date,
+                data_end_date,
+                symbols_count,
+                Jsonb(metrics),
+            ),
+        )
+
+
+def persist_price_update_result(
+    conn: psycopg.Connection,
+    *,
+    run_id: str,
+    result: dict[str, Any],
+) -> None:
+    """Persist one windowed download result immediately."""
+    frame = normalize_price_update_result_frame(pd.DataFrame([result]))
+
+    with conn.transaction():
+        upsert_price_update_window_results(conn, frame, run_id)
+        upsert_symbol_window_statuses(conn, frame, run_id)
+
+
+def update_price_update_pipeline_run_after_download(
+    conn: psycopg.Connection,
+    *,
+    run_id: str,
+) -> None:
+    """Update pipeline_runs metrics after the download stage completes.
+
+    The run stays `running` when there are zero failures because transform,
+    GCS DWD publish, BigQuery update, and final audit still follow.
+    """
+    results = fetch_price_update_window_results(conn, run_id)
+
+    action_counts = {
+        str(key): int(value)
+        for key, value in results["status"].value_counts().to_dict().items()
+    }
+    persistent_counts = {
+        str(key): int(value)
+        for key, value in results["persistent_status"].value_counts().to_dict().items()
+    }
+
+    failed_count = action_counts.get("failed", 0)
+    status = "failed" if failed_count else "running"
+
+    ods_records = int(results["row_count"].fillna(0).sum())
+
+    metrics = {
+        "current_stage": (
+            "download_failed" if failed_count else "download_complete"
+        ),
+        "action_counts": action_counts,
+        "persistent_status_counts": persistent_counts,
+        "api_call_count": int(results["api_called"].sum()),
+        "gcs_upload_count": int(results["uploaded_to_gcs"].sum()),
+        "empty_window_count": int(results["persistent_status"].eq("empty").sum()),
+        "ods_records": ods_records,
+    }
+
+    sql = """
+    UPDATE metadata.pipeline_runs
+    SET
+        status = %s,
+        ended_at = CASE
+            WHEN %s = 'failed' THEN now()
+            ELSE ended_at
+        END,
+        row_count = %s,
+        ods_records = %s,
+        metrics = COALESCE(metrics, '{}'::jsonb) || %s
+    WHERE run_id = %s;
+    """
+
+    with conn.cursor() as cur:
+        cur.execute(
+            sql,
+            (
+                status,
+                status,
+                ods_records,
+                ods_records,
+                Jsonb(metrics),
+                run_id,
+            ),
+        )
+
+
+def fetch_price_update_window_results(
+    conn: psycopg.Connection,
+    run_id: str,
+) -> pd.DataFrame:
+    """Fetch immutable per-window results for a run in CSV-compatible shape."""
+    sql = """
+    SELECT
+        source,
+        dataset_name,
+        ticker,
+        security_id,
+        requested_start_date AS request_start_date,
+        requested_end_date AS request_end_date,
+        action AS status,
+        row_count,
+        first_price_date,
+        last_price_date,
+        api_called,
+        uploaded_to_gcs,
+        local_path,
+        gcs_uri,
+        error_message,
+        completed_at AS completed_at_utc
+    FROM metadata.price_update_window_results
+    WHERE run_id = %s
+    ORDER BY ticker, security_id;
+    """
+
+    with conn.cursor() as cur:
+        cur.execute(sql, (run_id,))
+        rows = cur.fetchall()
+        columns = [description.name for description in cur.description]
+
+    if not rows:
+        raise ValueError(f"No window results found for run_id={run_id}")
+
+    frame = pd.DataFrame(rows, columns=columns)
+
+    return normalize_price_update_result_frame(frame)
+
+
+def export_price_update_window_results(
+    conn: psycopg.Connection,
+    *,
+    run_id: str,
+    output_path: str | Path,
+) -> Path:
+    """Export Postgres window results to a temporary compatibility CSV."""
+    frame = fetch_price_update_window_results(conn, run_id)
+
+    path = Path(output_path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    frame.drop(columns=["persistent_status"]).to_csv(path, index=False)
+
+    return path
 
 def fetch_pipeline_run(conn: psycopg.Connection, run_id: str) -> dict[str, Any]:
     sql = """

@@ -15,6 +15,20 @@ from quant_platform.prices.window_transform import (
     promote_windowed_dwd_update,
 )
 
+import os
+
+import psycopg
+from dotenv import load_dotenv
+
+from quant_platform.metadata.price_update import (
+    export_price_update_window_results,
+)
+from quant_platform.paths.data_lake import (
+    PRICE_UPDATE_METADATA_EXPORT_ROOT,
+)
+
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
+ENV_PATH = PROJECT_ROOT / ".env"
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
@@ -27,10 +41,15 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--download-report",
         type=Path,
-        required=True,
-        help=(
-            "Day 3 price download CSV report."
-        ),
+        default=None,
+        help="Legacy CSV bridge report from the completed Day 3 run.",
+    )
+
+    parser.add_argument(
+        "--run-id",
+        type=str,
+        default=None,
+        help="Postgres run_id to use as the transform source of truth.",
     )
 
     parser.add_argument(
@@ -92,9 +111,44 @@ def parse_args() -> argparse.Namespace:
 
     return parser.parse_args()
 
+def resolve_transform_input(args: argparse.Namespace) -> Path:
+    """Return a CSV-compatible input path.
+
+    If --run-id is supplied, the file is generated from Postgres into data/_tmp.
+    The operational fact source is Postgres, not reports/.
+    """
+    if bool(args.download_report) == bool(args.run_id):
+        raise ValueError(
+            "Specify exactly one of --download-report or --run-id"
+        )
+
+    if args.download_report is not None:
+        return args.download_report
+
+    load_dotenv(dotenv_path=ENV_PATH.resolve())
+
+    dsn = os.getenv("POSTGRES_DSN")
+    if not dsn:
+        raise RuntimeError("POSTGRES_DSN is missing from .env")
+
+    export_path = (
+        PRICE_UPDATE_METADATA_EXPORT_ROOT
+        / f"{args.run_id}.csv"
+    )
+
+    with psycopg.connect(dsn) as conn:
+        export_price_update_window_results(
+            conn,
+            run_id=args.run_id,
+            output_path=export_path,
+        )
+
+    return export_path
 
 def main() -> None:
     args = parse_args()
+
+    transform_input = resolve_transform_input(args)
 
     if args.dry_run and args.promote:
         raise ValueError(
@@ -104,7 +158,7 @@ def main() -> None:
 
     if args.dry_run:
         summary = preview_windowed_dwd_update(
-            args.download_report
+            transform_input
         )
 
         print("Windowed DWD transform preview")
@@ -121,7 +175,7 @@ def main() -> None:
 
     if args.promote:
         paths = promote_windowed_dwd_update(
-            args.download_report,
+            transform_input,
             dwd_root=args.dwd_root,
             staging_base=args.staging_base,
             archive_base=args.archive_base,
@@ -135,7 +189,7 @@ def main() -> None:
         return
 
     paths = prepare_windowed_dwd_update(
-        args.download_report,
+        transform_input,
         dwd_root=args.dwd_root,
         staging_base=args.staging_base,
         archive_base=args.archive_base,

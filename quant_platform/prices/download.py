@@ -572,6 +572,8 @@ def run_price_download_tasks(
     ods_root: str | Path = ODS_ROOT,
     overwrite: bool = False,
     bucket: Any | None = None,
+    fetch_fn: FetchFunction = fetch_daily_prices,
+    result_callback: Callable[[dict[str, Any]], None] | None = None,
 ) -> pd.DataFrame:
     """Process selected tasks and continue after individual failures."""
     results: list[dict[str, Any]] = []
@@ -611,14 +613,15 @@ def run_price_download_tasks(
 
             try:
                 result = process_price_download_task(
-                    task,
-                    client_config=client_config,
-                    settings=settings,
-                    ods_root=ods_root,
-                    overwrite=overwrite,
-                    session=session,
-                    bucket=bucket,
-                )
+                        task,
+                        client_config=client_config,
+                        settings=settings,
+                        ods_root=ods_root,
+                        overwrite=overwrite,
+                        session=session,
+                        bucket=bucket,
+                        fetch_fn=fetch_fn,
+                    )
 
                 print(
                     "  "
@@ -659,6 +662,9 @@ def run_price_download_tasks(
                 )
 
             results.append(result)
+
+            if result_callback is not None:
+                result_callback(result)
 
             should_sleep = (
                 index < len(task_records)

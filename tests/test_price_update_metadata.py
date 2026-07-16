@@ -160,6 +160,21 @@ def test_build_price_update_run_summary(tmp_path):
     assert summary.metrics["api_call_count"] == 2
     assert summary.metrics["empty_window_count"] == 1
 
+def test_normalize_price_update_result_frame_accepts_dataframe(tmp_path):
+    report_path = write_report(tmp_path)
+    raw = pd.read_csv(report_path)
+
+    from quant_platform.metadata.price_update import (
+        normalize_price_update_result_frame,
+    )
+
+    result = normalize_price_update_result_frame(raw)
+
+    assert len(result) == 3
+    assert result["persistent_status"].value_counts().to_dict() == {
+        "success": 2,
+        "empty": 1,
+    }
 
 def test_empty_action_requires_zero_rows(tmp_path):
     report_path = write_report(tmp_path)

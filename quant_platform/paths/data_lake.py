@@ -44,6 +44,10 @@ PRICE_UPDATE_AUDIT_REPORT_ROOT = (
     REPORTS_ROOT / "price_update_audit"
 )
 
+PRICE_UPDATE_METADATA_EXPORT_ROOT = (
+    DATA_ROOT / "_tmp" / "price_update_metadata_exports"
+)
+
 def to_gcs_object_path(local_path: str | Path) -> str:
     """
     Convert a local data-lake path to a GCS object-relative path.
