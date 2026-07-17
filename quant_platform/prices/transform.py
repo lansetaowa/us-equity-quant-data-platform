@@ -73,9 +73,10 @@ def validate_dwd_price_frame(df: pd.DataFrame) -> None:
 
     parsed_loaded_at = pd.to_datetime(
         working["loaded_at"],
+        format="mixed",
         errors="coerce",
         utc=True,
-    )
+        )
 
     invalid_loaded_at = parsed_loaded_at.isna()
 
@@ -256,6 +257,7 @@ def deduplicate_dwd_price_frame(
     )
     loaded_at_sort = pd.to_datetime(
         working["loaded_at"],
+        format="mixed",
         errors="coerce",
         utc=True,
     )
