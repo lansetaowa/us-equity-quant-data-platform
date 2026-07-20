@@ -10,11 +10,7 @@ from dotenv import load_dotenv
 from google.cloud import storage
 
 from quant_platform.clients.tiingo import TiingoClientConfig
-from quant_platform.metadata.price_update import (
-    persist_price_update_result,
-    start_price_update_pipeline_run,
-    update_price_update_pipeline_run_after_download,
-)
+
 from quant_platform.paths.data_lake import (
     ODS_ROOT,
     PRICE_GAP_TASK_LIST_PATH,
@@ -28,10 +24,18 @@ from quant_platform.prices.download import (
     parse_ticker_csv,
     print_price_download_summary,
     run_price_download_tasks,
-    save_price_download_results,
     select_price_download_tasks,
 )
 
+from quant_platform.metadata.price_update import (
+    export_price_update_window_results,
+    fetch_existing_price_update_window_results,
+    fetch_pipeline_run,
+    persist_price_update_result,
+    split_tasks_for_run_resume,
+    start_price_update_pipeline_run,
+    update_price_update_pipeline_run_after_download,
+)
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 ENV_PATH = PROJECT_ROOT / ".env"
@@ -111,6 +115,27 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
+def export_window_results_audit(
+    *,
+    dsn: str,
+    run_id: str,
+    audit_root: Path,
+) -> Path:
+    """Export Postgres window results as an audit CSV."""
+    audit_dir = audit_root / run_id
+    audit_dir.mkdir(parents=True, exist_ok=True)
+    export_path = audit_dir / "window_results_export.csv"
+
+    with psycopg.connect(dsn) as conn:
+        export_price_update_window_results(
+            conn,
+            run_id=run_id,
+            output_path=export_path,
+        )
+
+    return export_path
+
+
 def main() -> None:
     args = parse_args()
 
@@ -125,12 +150,37 @@ def main() -> None:
         limit=args.limit,
     )
 
-    plan = build_price_download_plan(
+    load_dotenv(dotenv_path=ENV_PATH.resolve())
+
+    dsn = os.getenv("POSTGRES_DSN")
+    if not dsn:
+        raise RuntimeError("POSTGRES_DSN is missing from .env")
+
+    with psycopg.connect(dsn) as conn:
+        existing_results = fetch_existing_price_update_window_results(
+            conn,
+            run_id=run_id,
+        )
+
+        try:
+            pipeline_run = fetch_pipeline_run(conn, run_id)
+        except ValueError:
+            pipeline_run = None
+
+    pending, already_completed = split_tasks_for_run_resume(
         selected,
-        ods_root=ODS_ROOT,
-        filename=settings.filename,
-        overwrite=args.overwrite,
+        existing_results,
     )
+
+    if pending.empty:
+        plan = None
+    else:
+        plan = build_price_download_plan(
+            pending,
+            ods_root=ODS_ROOT,
+            filename=settings.filename,
+            overwrite=args.overwrite,
+        )
 
     data_start_date = min(selected["request_start_date"])
     data_end_date = max(selected["request_end_date"])
@@ -148,16 +198,40 @@ def main() -> None:
     print("----------------------------")
     print(f"run_id: {run_id}")
     print(f"task list: {args.task_list}")
+    print(f"already completed for run_id: {len(already_completed)}")
+    print(f"pending tasks: {len(pending)}")
     print(f"selected tasks: {len(selected)}")
     print(f"tickers: {args.tickers or 'all'}")
     print(f"limit: {args.limit}")
     print(f"overwrite: {args.overwrite}")
     print(f"upload GCS: {args.upload_gcs}")
-    print("files already present:", int(plan["file_exists"].sum()))
-    print("planned API calls:", int(plan["would_call_api"].sum()))
+    if plan is not None:
+        print("files already present:", int(plan["file_exists"].sum()))
+        print("planned API calls:", int(plan["would_call_api"].sum()))
 
-    print("\nSelected plan:")
-    print(plan.head(30).to_string(index=False))
+        print("\nPending plan:")
+        print(plan.head(30).to_string(index=False))
+    else:
+        print("files already present: 0")
+        print("planned API calls: 0")
+        print("\nNo pending tasks for this run_id.")
+
+    if not already_completed.empty:
+        print("\nAlready completed sample:")
+        print(
+            already_completed[
+                [
+                    "ticker",
+                    "request_start_date",
+                    "request_end_date",
+                    "prior_status",
+                    "prior_action",
+                    "prior_row_count",
+                ]
+            ]
+            .head(20)
+            .to_string(index=False)
+        )
 
     if args.dry_run:
         print(
@@ -166,15 +240,36 @@ def main() -> None:
         )
         return
 
-    load_dotenv(dotenv_path=ENV_PATH.resolve())
+    if pending.empty:
+        print(
+            "\nNo pending tasks remain for this run_id. "
+            "No API calls or new window-result writes will be performed."
+        )
+
+        if pipeline_run and pipeline_run.get("status") == "running":
+            with psycopg.connect(dsn) as conn:
+                update_price_update_pipeline_run_after_download(
+                    conn,
+                    run_id=run_id,
+                )
+                conn.commit()
+
+            print("Existing running pipeline row was refreshed from results.")
+
+        if args.write_report_export:
+            export_path = export_window_results_audit(
+                dsn=dsn,
+                run_id=run_id,
+                audit_root=args.audit_root,
+            )
+
+            print("\nAudit export:", export_path)
+
+        return
 
     api_token = os.getenv("TIINGO_API_TOKEN")
     if not api_token:
         raise RuntimeError("TIINGO_API_TOKEN is missing from .env")
-
-    dsn = os.getenv("POSTGRES_DSN")
-    if not dsn:
-        raise RuntimeError("POSTGRES_DSN is missing from .env")
 
     client_config = TiingoClientConfig(
         api_token=api_token,
@@ -223,7 +318,7 @@ def main() -> None:
             conn.commit()
 
         results = run_price_download_tasks(
-            selected,
+            pending,
             client_config=client_config,
             settings=settings,
             ods_root=ODS_ROOT,
@@ -243,11 +338,11 @@ def main() -> None:
     failed_count = int((results["status"] == "failed").sum())
 
     if args.write_report_export:
-        audit_dir = args.audit_root / run_id
-        audit_dir.mkdir(parents=True, exist_ok=True)
-        export_path = audit_dir / "window_results_export.csv"
-
-        save_price_download_results(results, export_path)
+        export_path = export_window_results_audit(
+            dsn=dsn,
+            run_id=run_id,
+            audit_root=args.audit_root,
+        )
 
         print("\nAudit export:", export_path)
 

@@ -48,6 +48,20 @@ ACTION_TO_STATUS = {
     "skipped": "skipped",
 }
 
+COMPLETED_PERSISTENT_STATUSES = {
+    "success",
+    "empty",
+    "skipped",
+}
+
+RUN_RESULT_KEY_COLUMNS = [
+    "source",
+    "dataset_name",
+    "ticker",
+    "request_start_date",
+    "request_end_date",
+]
+
 
 @dataclass(frozen=True)
 class PriceUpdateRunSummary:
@@ -924,6 +938,197 @@ def update_price_update_pipeline_run_after_download(
             ),
         )
 
+def _normalize_task_key_frame(df: pd.DataFrame) -> pd.DataFrame:
+    """Normalize task/result keys for run-resume comparisons."""
+    required = set(RUN_RESULT_KEY_COLUMNS)
+    missing = sorted(required - set(df.columns))
+
+    if missing:
+        raise ValueError(f"Missing run-result key columns: {missing}")
+
+    output = df.copy()
+
+    for column in ["source", "dataset_name", "ticker"]:
+        output[column] = output[column].astype(str).str.strip()
+
+    output["ticker"] = output["ticker"].str.upper()
+
+    for column in ["request_start_date", "request_end_date"]:
+        parsed = pd.to_datetime(output[column], errors="coerce")
+
+        if parsed.isna().any():
+            raise ValueError(f"Invalid {column} values")
+
+        output[column] = parsed.dt.date
+
+    return output
+
+
+def fetch_existing_price_update_window_results(
+    conn: psycopg.Connection,
+    run_id: str,
+) -> pd.DataFrame:
+    """Fetch existing immutable window results for a run.
+
+    This is used by the downloader to skip completed same-run windows.
+    """
+    sql = """
+    SELECT
+        source,
+        dataset_name,
+        ticker,
+        security_id,
+        requested_start_date AS request_start_date,
+        requested_end_date AS request_end_date,
+        status,
+        action,
+        row_count,
+        first_price_date,
+        last_price_date,
+        api_called,
+        uploaded_to_gcs,
+        local_path,
+        gcs_uri,
+        error_message,
+        completed_at AS completed_at_utc
+    FROM metadata.price_update_window_results
+    WHERE run_id = %s
+    ORDER BY ticker, security_id;
+    """
+
+    with conn.cursor() as cur:
+        cur.execute(sql, (run_id,))
+        rows = cur.fetchall()
+        columns = [description.name for description in cur.description]
+
+    if not rows:
+        return pd.DataFrame(
+            columns=[
+                "source",
+                "dataset_name",
+                "ticker",
+                "security_id",
+                "request_start_date",
+                "request_end_date",
+                "status",
+                "action",
+                "row_count",
+                "first_price_date",
+                "last_price_date",
+                "api_called",
+                "uploaded_to_gcs",
+                "local_path",
+                "gcs_uri",
+                "error_message",
+                "completed_at_utc",
+            ]
+        )
+
+    output = pd.DataFrame(rows, columns=columns)
+    output = _normalize_task_key_frame(output)
+
+    output["status"] = output["status"].astype(str).str.strip().str.lower()
+    output["action"] = output["action"].astype(str).str.strip().str.lower()
+
+    return output.reset_index(drop=True)
+
+
+def split_tasks_for_run_resume(
+    tasks: pd.DataFrame,
+    existing_results: pd.DataFrame,
+) -> tuple[pd.DataFrame, pd.DataFrame]:
+    """
+    Split selected tasks into pending and already-completed groups.
+
+    Same-run resume policy:
+
+    - prior success / empty / skipped:
+        skip the task; do not overwrite the original action
+
+    - prior failed:
+        keep the task pending so it can be retried
+
+    - no prior result:
+        keep the task pending
+    """
+    normalized_tasks = _normalize_task_key_frame(tasks)
+
+    if existing_results.empty:
+        return normalized_tasks.reset_index(drop=True), pd.DataFrame()
+
+    normalized_existing = _normalize_task_key_frame(existing_results)
+    normalized_existing["status"] = (
+        normalized_existing["status"].astype(str).str.strip().str.lower()
+    )
+    normalized_existing["action"] = (
+        normalized_existing["action"].astype(str).str.strip().str.lower()
+    )
+
+    duplicate_results = normalized_existing.duplicated(
+        RUN_RESULT_KEY_COLUMNS,
+        keep=False,
+    )
+
+    if duplicate_results.any():
+        examples = (
+            normalized_existing.loc[
+                duplicate_results,
+                RUN_RESULT_KEY_COLUMNS + ["status", "action"],
+            ]
+            .head(20)
+            .to_dict("records")
+        )
+        raise ValueError(
+            "Existing run results contain duplicate task keys: "
+            f"{examples}"
+        )
+
+    completed_existing = normalized_existing[
+        normalized_existing["status"].isin(COMPLETED_PERSISTENT_STATUSES)
+    ].copy()
+
+    if completed_existing.empty:
+        return normalized_tasks.reset_index(drop=True), pd.DataFrame()
+
+    completed_for_join = completed_existing[
+        RUN_RESULT_KEY_COLUMNS
+        + [
+            "status",
+            "action",
+            "row_count",
+            "completed_at_utc",
+        ]
+    ].rename(
+        columns={
+            "status": "prior_status",
+            "action": "prior_action",
+            "row_count": "prior_row_count",
+            "completed_at_utc": "prior_completed_at_utc",
+        }
+    )
+
+    merged = normalized_tasks.merge(
+        completed_for_join,
+        on=RUN_RESULT_KEY_COLUMNS,
+        how="left",
+        indicator=True,
+    )
+
+    already_done = merged[merged["_merge"] == "both"].copy()
+    pending = merged[merged["_merge"] == "left_only"].copy()
+
+    pending = pending.loc[:, list(normalized_tasks.columns)].reset_index(drop=True)
+
+    skipped_columns = list(normalized_tasks.columns) + [
+        "prior_status",
+        "prior_action",
+        "prior_row_count",
+        "prior_completed_at_utc",
+    ]
+
+    already_done = already_done.loc[:, skipped_columns].reset_index(drop=True)
+
+    return pending, already_done
 
 def fetch_price_update_window_results(
     conn: psycopg.Connection,
