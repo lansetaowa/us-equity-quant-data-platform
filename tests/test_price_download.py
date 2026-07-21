@@ -11,6 +11,7 @@ from quant_platform.prices.download import run_price_download_tasks
 
 from quant_platform.clients.tiingo import (
     TiingoClientConfig,
+    TiingoClientError
 )
 from quant_platform.paths.price_paths import (
     build_windowed_price_raw_path,
@@ -407,3 +408,77 @@ def test_run_price_download_tasks_calls_result_callback(tmp_path):
     assert len(callback_results) == 1
     assert callback_results[0]["ticker"] == "AAPL"
     assert callback_results[0]["status"] == "downloaded"
+
+def test_run_price_download_tasks_marks_404_ticker_not_found_as_skipped(tmp_path):
+    tasks = pd.DataFrame(
+        [
+            {
+                "source": "tiingo",
+                "dataset_name": "equity_price_daily",
+                "ticker": "ATLN",
+                "security_id": "tiingo:ATLN",
+                "request_start_date": date(2026, 6, 23),
+                "request_end_date": date(2026, 7, 17),
+                "reason": "dwd_lag",
+            }
+        ]
+    )
+
+    def fake_fetch(**kwargs):
+        raise TiingoClientError(
+            "Tiingo HTTP 404 for ATLN: "
+            '{"detail":"Error: Ticker \'ATLN\' not found"}'
+        )
+
+    results = run_price_download_tasks(
+        tasks,
+        client_config=TiingoClientConfig(
+            api_token="secret",
+            max_attempts=1,
+        ),
+        settings=PriceDownloadSettings(),
+        ods_root=tmp_path / "data" / "ods",
+        fetch_fn=fake_fetch,
+    )
+
+    assert len(results) == 1
+    assert results.loc[0, "ticker"] == "ATLN"
+    assert results.loc[0, "status"] == "skipped"
+    assert results.loc[0, "row_count"] == 0
+    assert bool(results.loc[0, "api_called"])
+    assert not bool(results.loc[0, "uploaded_to_gcs"])
+    assert "not found" in results.loc[0, "error_message"].lower()
+
+def test_run_price_download_tasks_keeps_generic_error_as_failed(tmp_path):
+    tasks = pd.DataFrame(
+        [
+            {
+                "source": "tiingo",
+                "dataset_name": "equity_price_daily",
+                "ticker": "AAPL",
+                "security_id": "tiingo:AAPL",
+                "request_start_date": date(2026, 6, 23),
+                "request_end_date": date(2026, 7, 17),
+                "reason": "dwd_lag",
+            }
+        ]
+    )
+
+    def fake_fetch(**kwargs):
+        raise RuntimeError("temporary network issue")
+
+    results = run_price_download_tasks(
+        tasks,
+        client_config=TiingoClientConfig(
+            api_token="secret",
+            max_attempts=1,
+        ),
+        settings=PriceDownloadSettings(),
+        ods_root=tmp_path / "data" / "ods",
+        fetch_fn=fake_fetch,
+    )
+
+    assert len(results) == 1
+    assert results.loc[0, "status"] == "failed"
+    assert pd.isna(results.loc[0, "row_count"])
+    assert "temporary network issue" in results.loc[0, "error_message"]

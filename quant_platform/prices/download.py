@@ -96,6 +96,14 @@ class PriceDownloadSettings:
                 "sleep_seconds_between_requests must be >= 0"
             )
 
+def is_ticker_not_found_error(exc: Exception) -> bool:
+    """Return true for permanent Tiingo ticker-not-found errors."""
+    message = repr(exc).lower()
+
+    return (
+        "tiingo http 404" in message
+        and "not found" in message
+    )
 
 def load_price_download_settings(
     config_path: str | Path,
@@ -632,34 +640,37 @@ def run_price_download_tasks(
                 )
 
             except Exception as exc:
+                error_message = repr(exc)[:2000]
+                ticker_not_found = is_ticker_not_found_error(exc)
+
                 result = {
                     "source": str(task["source"]),
-                    "dataset_name": str(
-                        task["dataset_name"]
-                    ),
+                    "dataset_name": str(task["dataset_name"]),
                     "ticker": ticker,
-                    "security_id": str(
-                        task["security_id"]
-                    ),
+                    "security_id": str(task["security_id"]),
                     "request_start_date": start_date,
                     "request_end_date": end_date,
-                    "status": "failed",
-                    "row_count": None,
+                    "status": "skipped" if ticker_not_found else "failed",
+                    "row_count": 0 if ticker_not_found else None,
                     "first_price_date": None,
                     "last_price_date": None,
                     "api_called": api_expected,
                     "uploaded_to_gcs": False,
                     "local_path": local_path.as_posix(),
                     "gcs_uri": None,
-                    "error_message": repr(exc)[:2000],
-                    "completed_at_utc": datetime.now(
-                        timezone.utc
-                    ).isoformat(),
+                    "error_message": error_message,
+                    "completed_at_utc": datetime.now(timezone.utc).isoformat(),
                 }
 
                 print(
-                    f"  status=failed error={repr(exc)}"
+                    "  "
+                    f"status={result['status']} "
+                    f"error={error_message}"
                 )
+
+                # print(
+                #     f"  status=failed error={repr(exc)}"
+                # )
 
             results.append(result)
 
