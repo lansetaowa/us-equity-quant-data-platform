@@ -15,10 +15,14 @@ from quant_platform.prices.window_transform import (
     load_download_report,
     prepare_windowed_dwd_update,
     promote_windowed_dwd_update,
+    normalize_window_files,
 )
 from quant_platform.storage.local_json import (
     write_json_rows,
 )
+
+from datetime import datetime, timezone
+
 
 
 def raw_row(
@@ -153,7 +157,7 @@ def test_load_download_report_rejects_failed(
 
     with pytest.raises(
         ValueError,
-        match="non-success statuses",
+        match="non-terminal statuses",
     ):
         load_download_report(report_path)
 
@@ -300,3 +304,67 @@ def test_promote_archives_and_replaces_partition(
         / "promotion_complete.json"
     ).exists()
 
+def test_normalize_window_files_accepts_skipped_without_raw_file():
+    report = pd.DataFrame(
+        [
+            {
+                "source": "tiingo",
+                "dataset_name": "equity_price_daily",
+                "ticker": "ATLN",
+                "security_id": "tiingo:ATLN",
+                "request_start_date": pd.Timestamp(
+                    "2026-06-23"
+                ).date(),
+                "request_end_date": pd.Timestamp(
+                    "2026-07-17"
+                ).date(),
+                "status": "skipped",
+                "row_count": 0,
+                "local_path": None,
+            }
+        ]
+    )
+
+    normalized, audit = normalize_window_files(
+        report,
+        load_id="test-skipped",
+        loaded_at=datetime.now(timezone.utc),
+    )
+
+    assert normalized.empty
+    assert len(audit) == 1
+    assert audit.loc[0, "ticker"] == "ATLN"
+    assert audit.loc[0, "status"] == "skipped"
+    assert audit.loc[0, "raw_row_count"] == 0
+    assert audit.loc[0, "normalized_row_count"] == 0
+
+def test_normalize_window_files_rejects_skipped_nonzero_row_count():
+    report = pd.DataFrame(
+        [
+            {
+                "source": "tiingo",
+                "dataset_name": "equity_price_daily",
+                "ticker": "ATLN",
+                "security_id": "tiingo:ATLN",
+                "request_start_date": pd.Timestamp(
+                    "2026-06-23"
+                ).date(),
+                "request_end_date": pd.Timestamp(
+                    "2026-07-17"
+                ).date(),
+                "status": "skipped",
+                "row_count": 1,
+                "local_path": None,
+            }
+        ]
+    )
+
+    with pytest.raises(
+        ValueError,
+        match="Skipped window has non-zero row_count",
+    ):
+        normalize_window_files(
+            report,
+            load_id="test-skipped-invalid",
+            loaded_at=datetime.now(timezone.utc),
+        )

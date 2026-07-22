@@ -28,11 +28,21 @@ from quant_platform.storage.local_json import (
 )
 
 
-SUCCESS_STATUSES = {
+TERMINAL_STATUSES = {
     "downloaded",
     "existing",
     "empty",
     "existing_empty",
+    "skipped",
+}
+
+EMPTY_FILE_STATUSES = {
+    "empty",
+    "existing_empty",
+}
+
+NO_FILE_STATUSES = {
+    "skipped",
 }
 
 REQUIRED_REPORT_COLUMNS = {
@@ -104,7 +114,7 @@ def build_run_paths(
 def load_download_report(
     path: str | Path,
 ) -> pd.DataFrame:
-    """Load and validate a successful Day 3 download report."""
+    """Load and validate a terminal window-download report."""
     report_path = Path(path)
 
     if not report_path.exists():
@@ -175,15 +185,15 @@ def load_download_report(
         output[column] = parsed.dt.date
 
     unexpected_statuses = sorted(
-        set(output["status"]) - SUCCESS_STATUSES
+        set(output["status"]) - TERMINAL_STATUSES
     )
 
     if unexpected_statuses:
         raise ValueError(
-            "Download report contains non-success "
+            "Download report contains non-terminal "
             f"statuses: {unexpected_statuses}"
         )
-
+    
     duplicate_mask = output.duplicated(
         [
             "ticker",
@@ -291,13 +301,52 @@ def normalize_window_files(
     load_id: str,
     loaded_at: datetime,
 ) -> tuple[pd.DataFrame, pd.DataFrame]:
-    """Normalize all non-empty window files referenced by the report."""
+    """Normalize row-bearing files and audit terminal no-row results."""
     frames: list[pd.DataFrame] = []
     audit_rows: list[dict[str, Any]] = []
     input_row_count = 0
 
     for row in report.to_dict("records"):
-        path = Path(row["local_path"])
+        status = str(row["status"])
+        reported_count = int(row["row_count"])
+
+        local_path_value = row.get("local_path")
+
+        if pd.isna(local_path_value):
+            local_path_text = None
+        else:
+            local_path_text = str(local_path_value).strip() or None
+
+        # Skipped is a terminal no-file result. It must not require or
+        # attempt to read a local JSON file.
+        if status in NO_FILE_STATUSES:
+            if reported_count != 0:
+                raise ValueError(
+                    f"Skipped window has non-zero row_count "
+                    f"for {row['ticker']}: {reported_count}"
+                )
+
+            audit_rows.append(
+                {
+                    "ticker": row["ticker"],
+                    "security_id": row["security_id"],
+                    "status": status,
+                    "raw_row_count": 0,
+                    "normalized_row_count": 0,
+                    "min_price_date": None,
+                    "max_price_date": None,
+                    "local_path": local_path_text,
+                }
+            )
+            continue
+
+        if local_path_text is None:
+            raise ValueError(
+                f"Missing local_path for {row['ticker']} "
+                f"with status={status}"
+            )
+
+        path = Path(local_path_text)
 
         if not path.exists():
             raise FileNotFoundError(
@@ -307,8 +356,6 @@ def normalize_window_files(
         payload = read_json_rows(path)
 
         actual_count = len(payload)
-        reported_count = int(row["row_count"])
-        status = row["status"]
 
         if actual_count != reported_count:
             raise ValueError(
@@ -317,10 +364,7 @@ def normalize_window_files(
                 f"file={actual_count}"
             )
 
-        expected_empty = status in {
-            "empty",
-            "existing_empty",
-        }
+        expected_empty = status in EMPTY_FILE_STATUSES
 
         if expected_empty != (actual_count == 0):
             raise ValueError(
@@ -437,7 +481,12 @@ def preview_windowed_dwd_update(
         "task_count": len(report),
         "empty_window_count": int(
             report["status"]
-            .isin(["empty", "existing_empty"])
+            .isin(EMPTY_FILE_STATUSES)
+            .sum()
+        ),
+        "skipped_window_count": int(
+            report["status"]
+            .isin(NO_FILE_STATUSES)
             .sum()
         ),
         "raw_row_count": int(
@@ -641,9 +690,12 @@ def prepare_windowed_dwd_update(
             "task_count": len(report),
             "empty_window_count": int(
                 report["status"]
-                .isin(
-                    ["empty", "existing_empty"]
-                )
+                .isin(EMPTY_FILE_STATUSES)
+                .sum()
+            ),
+            "skipped_window_count": int(
+                report["status"]
+                .isin(NO_FILE_STATUSES)
                 .sum()
             ),
             "normalized_new_row_count": len(

@@ -1,21 +1,8 @@
 from __future__ import annotations
 
 import argparse
-from pathlib import Path
-
-from quant_platform.paths.data_lake import (
-    DWD_PRICE_ROOT,
-    DWD_PRICE_UPDATE_ARCHIVE_ROOT,
-    DWD_PRICE_UPDATE_STAGING_ROOT,
-    PRICE_UPDATE_TRANSFORM_REPORT_ROOT,
-)
-from quant_platform.prices.window_transform import (
-    prepare_windowed_dwd_update,
-    preview_windowed_dwd_update,
-    promote_windowed_dwd_update,
-)
-
 import os
+from pathlib import Path
 
 import psycopg
 from dotenv import load_dotenv
@@ -24,11 +11,21 @@ from quant_platform.metadata.price_update import (
     export_price_update_window_results,
 )
 from quant_platform.paths.data_lake import (
+    DWD_PRICE_ROOT,
+    DWD_PRICE_UPDATE_ARCHIVE_ROOT,
+    DWD_PRICE_UPDATE_STAGING_ROOT,
     PRICE_UPDATE_METADATA_EXPORT_ROOT,
+    PRICE_UPDATE_TRANSFORM_REPORT_ROOT,
+)
+from quant_platform.prices.window_transform import (
+    prepare_windowed_dwd_update,
+    preview_windowed_dwd_update,
+    promote_windowed_dwd_update,
 )
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 ENV_PATH = PROJECT_ROOT / ".env"
+
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
@@ -111,6 +108,7 @@ def parse_args() -> argparse.Namespace:
 
     return parser.parse_args()
 
+
 def resolve_transform_input(args: argparse.Namespace) -> Path:
     """Return a CSV-compatible input path.
 
@@ -144,6 +142,7 @@ def resolve_transform_input(args: argparse.Namespace) -> Path:
         )
 
     return export_path
+
 
 def main() -> None:
     args = parse_args()
