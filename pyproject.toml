@@ -1,0 +1,16 @@
+[tool.ruff]
+target-version = "py311"
+line-length = 88
+extend-exclude = [
+    "notebook/**",
+    "scripts/legacy/**",
+]
+
+[tool.ruff.lint]
+extend-ignore = [
+    "TRY004",
+]
+
+[tool.ruff.lint.per-file-ignores]
+"quant_platform/prices/download.py" = ["BLE001"]
+"scripts/run_tiingo_backfill.py" = ["BLE001"]
