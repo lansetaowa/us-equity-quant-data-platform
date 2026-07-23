@@ -4,7 +4,7 @@ import argparse
 import io
 import os
 import zipfile
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 from urllib.request import Request, urlopen
@@ -13,7 +13,6 @@ import pandas as pd
 import yaml
 from dotenv import load_dotenv
 from google.cloud import storage
-
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 ENV_PATH = PROJECT_ROOT / ".env"
@@ -179,7 +178,7 @@ def main() -> None:
             dry_run=args.dry_run_gcs,
         )
 
-    loaded_at = datetime.now(timezone.utc).isoformat()
+    loaded_at = datetime.now(UTC).isoformat()
     print(f"\nCompleted supported tickers ingestion at {loaded_at}")
 
 

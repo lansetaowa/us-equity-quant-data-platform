@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 # from pathlib import Path
-
 from quant_platform.storage.gcs_sync import (
     GcsUploadItem,
     build_upload_plan,

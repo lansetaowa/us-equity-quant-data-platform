@@ -18,7 +18,6 @@ from quant_platform.prices.cloud_publish import (
     sync_dwd_partitions_to_gcs,
 )
 
-
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 ENV_PATH = PROJECT_ROOT / ".env"
 

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from datetime import UTC, datetime
 from pathlib import Path
 
 import pandas as pd
@@ -13,16 +14,13 @@ from quant_platform.prices.transform import (
 )
 from quant_platform.prices.window_transform import (
     load_download_report,
+    normalize_window_files,
     prepare_windowed_dwd_update,
     promote_windowed_dwd_update,
-    normalize_window_files,
 )
 from quant_platform.storage.local_json import (
     write_json_rows,
 )
-
-from datetime import datetime, timezone
-
 
 
 def raw_row(
@@ -328,7 +326,7 @@ def test_normalize_window_files_accepts_skipped_without_raw_file():
     normalized, audit = normalize_window_files(
         report,
         load_id="test-skipped",
-        loaded_at=datetime.now(timezone.utc),
+        loaded_at=datetime.now(UTC),
     )
 
     assert normalized.empty
@@ -366,5 +364,5 @@ def test_normalize_window_files_rejects_skipped_nonzero_row_count():
         normalize_window_files(
             report,
             load_id="test-skipped-invalid",
-            loaded_at=datetime.now(timezone.utc),
+            loaded_at=datetime.now(UTC),
         )

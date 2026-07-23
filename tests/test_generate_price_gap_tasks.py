@@ -6,9 +6,9 @@ import pandas as pd
 import pytest
 
 from quant_platform.prices.gap_tasks import (
+    _max_date_or_none,
     attach_daily_update_eligibility,
     build_price_gap_tasks,
-    _max_date_or_none
 )
 
 

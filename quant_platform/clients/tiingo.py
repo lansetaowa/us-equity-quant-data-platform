@@ -13,7 +13,6 @@ from requests.exceptions import RequestException
 
 from quant_platform.paths.price_paths import normalize_ticker
 
-
 TIINGO_API_BASE_URL = "https://api.tiingo.com"
 DEFAULT_USER_AGENT = "us-equity-quant-data-platform/1.0"
 

@@ -16,24 +16,24 @@ from quant_platform.paths.data_lake import (
 
 
 def test_core_data_lake_paths():
-    assert ODS_ROOT == Path("data/ods")
-    assert DWD_PRICE_ROOT == Path("data/dwd/equity_price_daily")
-    assert PRICE_UPDATE_CONFIG_PATH == Path("configs/price_update.yml")
+    assert Path("data/ods") == ODS_ROOT
+    assert Path("data/dwd/equity_price_daily") == DWD_PRICE_ROOT
+    assert Path("configs/price_update.yml") == PRICE_UPDATE_CONFIG_PATH
 
 
 def test_security_master_paths():
-    assert BOOTSTRAP_CANDIDATES_TASK_LIST_PATH == Path(
+    assert Path(
         "data/dwd/security_master/backfill_task_list_bootstrap_candidates.parquet"
-    )
-    assert DIM_SECURITY_PATH == Path(
+    ) == BOOTSTRAP_CANDIDATES_TASK_LIST_PATH
+    assert Path(
         "data/dwd/security_master/dim_security.parquet"
-    )
-    assert PRICE_GAP_TASK_LIST_PATH == Path(
+    ) == DIM_SECURITY_PATH
+    assert Path(
         "data/dwd/security_master/price_gap_task_list.parquet"
-    )
-    assert PRICE_GAP_EXCLUDED_SYMBOLS_PATH == Path(
+    ) == PRICE_GAP_TASK_LIST_PATH
+    assert Path(
         "data/dwd/security_master/price_gap_excluded_symbols.parquet"
-    )
+    ) == PRICE_GAP_EXCLUDED_SYMBOLS_PATH
 
 
 def test_to_gcs_object_path_strips_data_prefix():

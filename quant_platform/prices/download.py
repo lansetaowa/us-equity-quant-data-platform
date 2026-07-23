@@ -3,7 +3,7 @@ from __future__ import annotations
 import time
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
-from datetime import date, datetime, timezone
+from datetime import UTC, date, datetime
 from pathlib import Path
 from typing import Any
 
@@ -34,7 +34,6 @@ from quant_platform.storage.local_json import (
     read_json_rows,
     write_json_rows,
 )
-
 
 REQUIRED_GAP_TASK_COLUMNS: tuple[str, ...] = (
     "source",
@@ -567,7 +566,7 @@ def process_price_download_task(
         "gcs_uri": gcs_uri,
         "error_message": None,
         "completed_at_utc": datetime.now(
-            timezone.utc
+            UTC
         ).isoformat(),
     }
 
@@ -659,7 +658,7 @@ def run_price_download_tasks(
                     "local_path": local_path.as_posix(),
                     "gcs_uri": None,
                     "error_message": error_message,
-                    "completed_at_utc": datetime.now(timezone.utc).isoformat(),
+                    "completed_at_utc": datetime.now(UTC).isoformat(),
                 }
 
                 print(

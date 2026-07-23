@@ -1,13 +1,13 @@
 from __future__ import annotations
 
 import argparse
+import os
 from dataclasses import dataclass
 from datetime import date, timedelta
 from pathlib import Path
 
 import duckdb
 import pandas as pd
-import os
 import psycopg
 
 from quant_platform.calendar.eod import (
@@ -471,11 +471,10 @@ def load_latest_window_metadata(
     WHERE rn = 1;
     """
 
-    with psycopg.connect(dsn) as conn:
-        with conn.cursor() as cur:
-            cur.execute(sql, (source, dataset_name))
-            rows = cur.fetchall()
-            columns = [description.name for description in cur.description]
+    with psycopg.connect(dsn) as conn, conn.cursor() as cur:
+        cur.execute(sql, (source, dataset_name))
+        rows = cur.fetchall()
+        columns = [description.name for description in cur.description]
 
     if not rows:
         return _empty_latest_window_metadata()

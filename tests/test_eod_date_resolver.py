@@ -9,7 +9,6 @@ from quant_platform.calendar.eod import (
     resolve_latest_complete_eod_date,
 )
 
-
 NY = ZoneInfo("America/New_York")
 
 

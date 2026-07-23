@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import argparse
 import os
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 
 import psycopg
@@ -10,7 +10,15 @@ from dotenv import load_dotenv
 from google.cloud import storage
 
 from quant_platform.clients.tiingo import TiingoClientConfig
-
+from quant_platform.metadata.price_update import (
+    export_price_update_window_results,
+    fetch_existing_price_update_window_results,
+    fetch_pipeline_run,
+    persist_price_update_result,
+    split_tasks_for_run_resume,
+    start_price_update_pipeline_run,
+    update_price_update_pipeline_run_after_download,
+)
 from quant_platform.paths.data_lake import (
     ODS_ROOT,
     PRICE_GAP_TASK_LIST_PATH,
@@ -27,22 +35,12 @@ from quant_platform.prices.download import (
     select_price_download_tasks,
 )
 
-from quant_platform.metadata.price_update import (
-    export_price_update_window_results,
-    fetch_existing_price_update_window_results,
-    fetch_pipeline_run,
-    persist_price_update_result,
-    split_tasks_for_run_resume,
-    start_price_update_pipeline_run,
-    update_price_update_pipeline_run_after_download,
-)
-
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 ENV_PATH = PROJECT_ROOT / ".env"
 
 
 def default_run_id() -> str:
-    return "price_update_" + datetime.now(timezone.utc).strftime(
+    return "price_update_" + datetime.now(UTC).strftime(
         "%Y%m%dT%H%M%SZ"
     )
 

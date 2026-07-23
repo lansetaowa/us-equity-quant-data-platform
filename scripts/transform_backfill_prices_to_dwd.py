@@ -4,7 +4,7 @@ import argparse
 import json
 import os
 import shutil
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -12,7 +12,6 @@ import pandas as pd
 import psycopg
 import yaml
 from dotenv import load_dotenv
-
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 ENV_PATH = PROJECT_ROOT / ".env"
@@ -368,8 +367,8 @@ def standardize_raw_prices(
 
 def build_dwd_dataframe(scope_df: pd.DataFrame, ods_root: Path) -> pd.DataFrame:
     """Read raw ODS files and build combined DWD DataFrame."""
-    load_id = f"backfill_{datetime.now(timezone.utc).strftime('%Y%m%d_%H%M%S')}"
-    loaded_at = datetime.now(timezone.utc).isoformat()
+    load_id = f"backfill_{datetime.now(UTC).strftime('%Y%m%d_%H%M%S')}"
+    loaded_at = datetime.now(UTC).isoformat()
 
     frames = []
 
@@ -500,7 +499,7 @@ def replace_final_output(tmp_root: Path, final_root: Path) -> None:
     archive_parent.mkdir(parents=True, exist_ok=True)
 
     if final_root.exists():
-        timestamp = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
+        timestamp = datetime.now(UTC).strftime("%Y%m%d_%H%M%S")
         archive_path = archive_parent / f"equity_price_daily_replaced_{timestamp}"
         shutil.move(str(final_root), str(archive_path))
         print(f"Archived previous final DWD root to: {archive_path}")

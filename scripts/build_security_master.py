@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import argparse
 import os
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -10,7 +10,6 @@ import pandas as pd
 import yaml
 from dotenv import load_dotenv
 from google.cloud import storage
-
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 ENV_PATH = PROJECT_ROOT / ".env"
@@ -300,7 +299,7 @@ def finalize_security_master(
         output["end_date"] >= active_cutoff
     )
 
-    output["loaded_at"] = datetime.now(timezone.utc).isoformat()
+    output["loaded_at"] = datetime.now(UTC).isoformat()
 
     output["start_date"] = pd.to_datetime(output["start_date"], errors="coerce").dt.date
     output["end_date"] = pd.to_datetime(output["end_date"], errors="coerce").dt.date

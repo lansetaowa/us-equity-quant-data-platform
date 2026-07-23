@@ -1,16 +1,41 @@
 [tool.ruff]
 target-version = "py311"
 line-length = 88
+force-exclude = true
 extend-exclude = [
-    "notebook/**",
-    "scripts/legacy/**",
+    "notebook",
+    "scripts/legacy",
 ]
 
 [tool.ruff.lint]
-extend-ignore = [
-    "TRY004",
+select = [
+    "E4",
+    "E7",
+    "E9",
+    "F",
+    "I",
+    "UP",
+    "SIM",
+    "RUF",
+    "ISC",
+    "FLY",
+    "DTZ",
+    "TRY",
+    "BLE",
 ]
+ignore = [
+    # Too noisy for this project; we intentionally use ordinary ValueError /
+    # RuntimeError messages throughout CLI/data-validation code.
+    "TRY",
 
-[tool.ruff.lint.per-file-ignores]
-"quant_platform/prices/download.py" = ["BLE001"]
-"scripts/run_tiingo_backfill.py" = ["BLE001"]
+    # Per-symbol/per-window task runners intentionally catch broad exceptions
+    # so failures can be persisted to Postgres instead of crashing the whole run.
+    "BLE001",
+
+    # Existing pytest match strings include dots such as config.price_update.
+    "RUF043",
+
+    # Legacy/dev scripts may use date.today(); production EOD logic is covered
+    # separately in quant_platform.calendar.
+    "DTZ011",
+]

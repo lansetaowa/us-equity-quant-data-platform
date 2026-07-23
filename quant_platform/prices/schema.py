@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import pandas as pd
 
-
 DWD_PRICE_COLUMNS: tuple[str, ...] = (
     "security_id",
     "ticker",

@@ -12,7 +12,6 @@ from quant_platform.paths.price_paths import (
     to_gcs_object_path,
 )
 
-
 __all__ = [
     "DATASET_NAME",
     "DEFAULT_WINDOWED_PRICE_FILENAME",

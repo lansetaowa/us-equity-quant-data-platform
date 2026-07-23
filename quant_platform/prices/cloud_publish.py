@@ -16,7 +16,6 @@ from quant_platform.storage.gcs_sync import (
     upload_file,
 )
 
-
 REQUIRED_MANIFEST_COLUMNS = {
     "year",
     "month",

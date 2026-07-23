@@ -3,7 +3,7 @@ from __future__ import annotations
 import argparse
 import os
 import re
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -11,7 +11,6 @@ import pandas as pd
 import yaml
 from dotenv import load_dotenv
 from google.cloud import storage
-
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 ENV_PATH = PROJECT_ROOT / ".env"
@@ -263,7 +262,7 @@ def build_candidate_pool(
             f"(excluded {excluded_count:,})"
         )
 
-    now_utc = datetime.now(timezone.utc).isoformat()
+    now_utc = datetime.now(UTC).isoformat()
 
     df["candidate_pool_name"] = candidate_pool_name
     df["candidate_reason"] = (

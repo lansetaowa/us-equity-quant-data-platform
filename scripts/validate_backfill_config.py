@@ -9,7 +9,6 @@ import pandas as pd
 import yaml
 from dotenv import load_dotenv
 
-
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 ENV_PATH = PROJECT_ROOT / ".env"
 CONFIG_PATH = PROJECT_ROOT / "configs" / "backfill.yml"

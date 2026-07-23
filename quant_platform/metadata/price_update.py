@@ -10,7 +10,6 @@ import pandas as pd
 import psycopg
 from psycopg.types.json import Jsonb
 
-
 REPORT_REQUIRED_COLUMNS = {
     "source",
     "dataset_name",
@@ -1073,7 +1072,7 @@ def split_tasks_for_run_resume(
         examples = (
             normalized_existing.loc[
                 duplicate_results,
-                RUN_RESULT_KEY_COLUMNS + ["status", "action"],
+                [*RUN_RESULT_KEY_COLUMNS, "status", "action"],
             ]
             .head(20)
             .to_dict("records")
@@ -1091,8 +1090,8 @@ def split_tasks_for_run_resume(
         return normalized_tasks.reset_index(drop=True), pd.DataFrame()
 
     completed_for_join = completed_existing[
-        RUN_RESULT_KEY_COLUMNS
-        + [
+        [
+            *RUN_RESULT_KEY_COLUMNS,
             "status",
             "action",
             "row_count",
@@ -1119,7 +1118,8 @@ def split_tasks_for_run_resume(
 
     pending = pending.loc[:, list(normalized_tasks.columns)].reset_index(drop=True)
 
-    skipped_columns = list(normalized_tasks.columns) + [
+    skipped_columns = [
+        *list(normalized_tasks.columns),
         "prior_status",
         "prior_action",
         "prior_row_count",

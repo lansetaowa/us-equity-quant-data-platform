@@ -3,7 +3,7 @@ from __future__ import annotations
 import re
 import shutil
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -26,7 +26,6 @@ from quant_platform.storage.local_json import (
     read_json_rows,
     write_json,
 )
-
 
 TERMINAL_STATUSES = {
     "downloaded",
@@ -456,7 +455,7 @@ def preview_windowed_dwd_update(
         load_id=(
             f"preview:{derive_run_id(download_report)}"
         ),
-        loaded_at=datetime.now(timezone.utc),
+        loaded_at=datetime.now(UTC),
     )
 
     if normalized.empty:
@@ -540,7 +539,7 @@ def prepare_windowed_dwd_update(
     )
 
     prepared_at = datetime.now(
-        timezone.utc
+        UTC
     )
 
     normalized, file_audit = normalize_window_files(
@@ -883,7 +882,7 @@ def promote_windowed_dwd_update(
             "run_id": paths.run_id,
             "promoted_at_utc": (
                 datetime.now(
-                    timezone.utc
+                    UTC
                 ).isoformat()
             ),
             "affected_partition_count": len(

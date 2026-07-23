@@ -1,9 +1,10 @@
 from __future__ import annotations
 
 import re
+from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import date
-from typing import Any, Sequence
+from typing import Any
 
 import pandas as pd
 from google.cloud import bigquery
@@ -528,11 +529,9 @@ def validate_target_after_update(
         location=location,
     )
 
-    join_condition = " AND ".join(
-        [
-            "s.`security_id` = t.`security_id`",
-            "s.`date` = t.`date`",
-        ]
+    join_condition = (
+        "s.`security_id` = t.`security_id` "
+        "AND s.`date` = t.`date`"
     )
 
     target_predicate = build_date_predicate(

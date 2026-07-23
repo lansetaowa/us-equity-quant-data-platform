@@ -14,9 +14,10 @@ from quant_platform.storage.gcs_sync import (
     build_upload_plan,
     execute_upload_plan,
     gcs_object_name_from_local_path,
+)
+from quant_platform.storage.gcs_sync import (
     upload_file as upload_gcs_file,
 )
-
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 ENV_PATH = PROJECT_ROOT / ".env"

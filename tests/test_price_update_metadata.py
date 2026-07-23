@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from datetime import date
 
 import pandas as pd
 import pytest
@@ -12,7 +13,6 @@ from quant_platform.metadata.price_update import (
     split_tasks_for_run_resume,
 )
 
-from datetime import date
 
 def write_report(tmp_path):
     path = tmp_path / "price_download_test.csv"

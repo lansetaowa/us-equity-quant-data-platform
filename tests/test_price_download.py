@@ -7,12 +7,7 @@ from typing import Any
 import pandas as pd
 import pytest
 
-from quant_platform.prices.download import run_price_download_tasks
-
-from quant_platform.clients.tiingo import (
-    TiingoClientConfig,
-    TiingoClientError
-)
+from quant_platform.clients.tiingo import TiingoClientConfig, TiingoClientError
 from quant_platform.paths.price_paths import (
     build_windowed_price_raw_path,
 )
@@ -21,6 +16,7 @@ from quant_platform.prices.download import (
     build_price_download_plan,
     load_price_gap_tasks,
     process_price_download_task,
+    run_price_download_tasks,
     select_price_download_tasks,
     validate_price_rows_for_window,
 )
@@ -370,8 +366,8 @@ def test_build_price_download_plan(tmp_path):
     )
 
     assert len(plan) == 1
-    assert plan.loc[0, "file_exists"] == False  # noqa: E712
-    assert plan.loc[0, "would_call_api"] == True  # noqa: E712
+    assert not bool(plan.loc[0, "file_exists"])
+    assert bool(plan.loc[0, "would_call_api"])
     assert (
         "request_start=2026-06-12"
         in plan.loc[0, "local_path"]
