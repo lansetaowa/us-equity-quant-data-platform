@@ -2,7 +2,6 @@ from __future__ import annotations
 
 from pathlib import Path
 
-
 DATA_ROOT = Path("data")
 ODS_ROOT = DATA_ROOT / "ods"
 DWD_ROOT = DATA_ROOT / "dwd"

@@ -1,12 +1,14 @@
 from __future__ import annotations
 
 import argparse
+import os
 from dataclasses import dataclass
 from datetime import date, timedelta
 from pathlib import Path
 
 import duckdb
 import pandas as pd
+import psycopg
 
 from quant_platform.calendar.eod import (
     EodResolutionConfig,
@@ -48,6 +50,9 @@ class PriceGapTaskConfig:
     output_path: Path
     excluded_output_path: Path
     active_end_date_grace_days: int
+    use_postgres_metadata: bool
+    metadata_dsn_env_var: str
+    max_failed_attempts: int
 
 def build_eod_resolution_config(config_data: dict) -> EodResolutionConfig:
     price_update = require_mapping(config_data, "price_update")
@@ -88,6 +93,12 @@ def load_price_gap_task_config(
         context="price_update",
     )
 
+    metadata_config = optional_mapping(
+        price_update,
+        "metadata",
+        context="price_update",
+    )
+
     source = str(price_update.get("source", "tiingo")).strip()
     dataset_name = str(
         price_update.get("dataset_name", "equity_price_daily")
@@ -106,6 +117,23 @@ def load_price_gap_task_config(
     if active_end_date_grace_days < 0:
         raise ValueError("active_end_date_grace_days must be >= 0")
 
+    max_failed_attempts = int(
+        daily_update_universe.get("max_failed_attempts", 3)
+    )
+
+    if max_failed_attempts < 0:
+        raise ValueError("max_failed_attempts must be >= 0")
+
+    use_postgres_metadata = bool(
+        metadata_config.get("use_postgres", True)
+    )
+    metadata_dsn_env_var = str(
+        metadata_config.get("dsn_env_var", "POSTGRES_DSN")
+    ).strip()
+
+    if not metadata_dsn_env_var:
+        raise ValueError("metadata.dsn_env_var must not be empty")
+
     eod_config = build_eod_resolution_config(config_data)
     latest_complete_eod_date = resolve_latest_complete_eod_date(eod_config)
 
@@ -120,6 +148,9 @@ def load_price_gap_task_config(
         output_path=output_path,
         excluded_output_path=excluded_output_path,
         active_end_date_grace_days=active_end_date_grace_days,
+        use_postgres_metadata=use_postgres_metadata,
+        metadata_dsn_env_var=metadata_dsn_env_var,
+        max_failed_attempts=max_failed_attempts,
     )
 
 def _standardize_symbol_keys(df: pd.DataFrame) -> pd.DataFrame:
@@ -335,6 +366,179 @@ def load_latest_dwd_dates(dwd_price_root: Path) -> pd.DataFrame:
     return latest
 
 
+def _empty_latest_window_metadata() -> pd.DataFrame:
+    return pd.DataFrame(
+        columns=[
+            "ticker",
+            "security_id",
+            "metadata_status",
+            "metadata_requested_start_date",
+            "metadata_requested_end_date",
+            "metadata_last_successful_date",
+            "metadata_last_price_date",
+            "metadata_attempt_count",
+            "metadata_last_run_id",
+            "metadata_last_action",
+            "metadata_checked_through_date",
+        ]
+    )
+
+
+def _date_or_none(value) -> date | None:
+    """Normalize scalar date-like values, including pd.NaT, into date or None."""
+    if value is None:
+        return None
+
+    if pd.isna(value):
+        return None
+
+    timestamp = pd.Timestamp(value)
+
+    if pd.isna(timestamp):
+        return None
+
+    return timestamp.date()
+
+
+def _max_date_or_none(values: list[object]) -> date | None:
+    """Return max valid date, ignoring None / NaT / NA values."""
+    usable: list[date] = []
+
+    for value in values:
+        parsed = _date_or_none(value)
+
+        if parsed is not None:
+            usable.append(parsed)
+
+    if not usable:
+        return None
+
+    return max(usable)
+
+
+def load_latest_window_metadata(
+    dsn: str,
+    *,
+    source: str,
+    dataset_name: str,
+) -> pd.DataFrame:
+    """
+    Load the latest operational metadata row per ticker/security_id.
+
+    This table represents current per-window state. It prevents repeatedly
+    generating the same empty or already-checked window.
+    """
+    sql = """
+    WITH ranked AS (
+        SELECT
+            ticker,
+            security_id,
+            status,
+            requested_start_date,
+            requested_end_date,
+            last_successful_date,
+            last_price_date,
+            attempt_count,
+            last_run_id,
+            last_action,
+            ROW_NUMBER() OVER (
+                PARTITION BY ticker, security_id
+                ORDER BY
+                    requested_end_date DESC,
+                    COALESCE(
+                        last_completed_at,
+                        updated_at,
+                        created_at
+                    ) DESC,
+                    requested_start_date DESC
+            ) AS rn
+        FROM metadata.symbol_ingestion_status
+        WHERE source = %s
+          AND dataset_name = %s
+    )
+    SELECT
+        ticker,
+        security_id,
+        status AS metadata_status,
+        requested_start_date AS metadata_requested_start_date,
+        requested_end_date AS metadata_requested_end_date,
+        last_successful_date AS metadata_last_successful_date,
+        last_price_date AS metadata_last_price_date,
+        attempt_count AS metadata_attempt_count,
+        last_run_id AS metadata_last_run_id,
+        last_action AS metadata_last_action
+    FROM ranked
+    WHERE rn = 1;
+    """
+
+    with psycopg.connect(dsn) as conn, conn.cursor() as cur:
+        cur.execute(sql, (source, dataset_name))
+        rows = cur.fetchall()
+        columns = [description.name for description in cur.description]
+
+    if not rows:
+        return _empty_latest_window_metadata()
+
+    output = pd.DataFrame(rows, columns=columns)
+
+    output["ticker"] = (
+        output["ticker"]
+        .astype(str)
+        .str.strip()
+        .str.upper()
+    )
+    output["security_id"] = output["security_id"].astype(str).str.strip()
+    output["metadata_status"] = (
+        output["metadata_status"]
+        .astype(str)
+        .str.strip()
+        .str.lower()
+    )
+
+    for column in [
+        "metadata_requested_start_date",
+        "metadata_requested_end_date",
+        "metadata_last_successful_date",
+        "metadata_last_price_date",
+    ]:
+        output[column] = (
+            pd.to_datetime(output[column], errors="coerce")
+            .map(_date_or_none)
+        )
+
+    output["metadata_attempt_count"] = (
+        pd.to_numeric(
+            output["metadata_attempt_count"],
+            errors="coerce",
+        )
+        .fillna(0)
+        .astype(int)
+    )
+
+    def checked_through(row) -> date | None:
+        status = row["metadata_status"]
+
+        if status == "success":
+            return _max_date_or_none(
+                [
+                    row["metadata_last_successful_date"],
+                    row["metadata_last_price_date"],
+                    row["metadata_requested_end_date"],
+                ]
+            )
+
+        if status in {"empty", "skipped"}:
+            return _date_or_none(row["metadata_requested_end_date"])
+
+        return None
+
+    output["metadata_checked_through_date"] = output.apply(
+        checked_through,
+        axis=1,
+    )
+
+    return output.sort_values(["ticker", "security_id"]).reset_index(drop=True)
+
 def _empty_gap_tasks() -> pd.DataFrame:
     return pd.DataFrame(
         columns=[
@@ -350,7 +554,6 @@ def _empty_gap_tasks() -> pd.DataFrame:
         ]
     )
 
-
 def build_price_gap_tasks(
     bootstrap_tasks: pd.DataFrame,
     latest_dwd_dates: pd.DataFrame,
@@ -358,15 +561,43 @@ def build_price_gap_tasks(
     dataset_name: str,
     bootstrap_anchor_date: date,
     latest_complete_eod_date: date,
+    latest_window_metadata: pd.DataFrame | None = None,
+    max_failed_attempts: int = 3,
 ) -> pd.DataFrame:
     """
     Build gap tasks for eligible daily update candidates.
 
-    If an eligible ticker has no DWD rows, start from bootstrap_anchor_date + 1.
-    If request_start_date > latest_complete_eod_date, no task is emitted.
+    Effective state combines:
+    - local DWD latest date
+    - Postgres operational window metadata
+
+    Rules:
+    - success: advance from latest successful/price date
+    - empty: advance from requested_end_date, avoiding repeat empty windows
+    - failed: retry from failed requested_start_date until retry limit
+    - skipped: exclude from daily update
     """
+    if max_failed_attempts < 0:
+        raise ValueError("max_failed_attempts must be >= 0")
+
+    output_columns = [
+        "source",
+        "dataset_name",
+        "ticker",
+        "security_id",
+        "latest_dwd_date",
+        "metadata_status",
+        "metadata_requested_start_date",
+        "metadata_requested_end_date",
+        "metadata_checked_through_date",
+        "request_start_date",
+        "request_end_date",
+        "reason",
+        "generated_at_utc",
+    ]
+
     if latest_complete_eod_date <= bootstrap_anchor_date:
-        return _empty_gap_tasks()
+        return pd.DataFrame(columns=output_columns)
 
     base = _standardize_symbol_keys(bootstrap_tasks)[
         ["ticker", "security_id"]
@@ -382,48 +613,126 @@ def build_price_gap_tasks(
             errors="coerce",
         ).dt.date
 
+    if latest_window_metadata is None or latest_window_metadata.empty:
+        metadata = _empty_latest_window_metadata()
+    else:
+        metadata = latest_window_metadata.copy()
+        metadata["ticker"] = (
+            metadata["ticker"]
+            .astype(str)
+            .str.strip()
+            .str.upper()
+        )
+        metadata["security_id"] = metadata["security_id"].astype(str).str.strip()
+
     merged = base.merge(
         latest,
         on=["ticker", "security_id"],
         how="left",
+    ).merge(
+        metadata,
+        on=["ticker", "security_id"],
+        how="left",
     )
 
-    merged["effective_latest_date"] = merged["latest_dwd_date"].apply(
-        lambda x: x if pd.notna(x) else bootstrap_anchor_date
-    )
+    def dwd_latest_or_none(row) -> date | None:
+        return _date_or_none(row.get("latest_dwd_date"))
 
-    merged["request_start_date"] = merged["effective_latest_date"].apply(
-        lambda x: x + timedelta(days=1)
-    )
+    def baseline_latest(row) -> date:
+        """
+        Use local DWD latest date when available.
+
+        bootstrap_anchor_date is only the fallback for symbols with no DWD rows.
+        It must not mask a real latest_dwd_date that is earlier than the
+        bootstrap anchor.
+        """
+        return dwd_latest_or_none(row) or bootstrap_anchor_date
+
+    def effective_latest(row) -> date:
+        return _max_date_or_none(
+            [
+                baseline_latest(row),
+                _date_or_none(row.get("metadata_checked_through_date")),
+            ]
+        ) or bootstrap_anchor_date
+
+    def request_start(row) -> date | None:
+        status = row.get("metadata_status")
+
+        if status == "skipped":
+            return None
+
+        if status == "failed":
+            attempts = int(row.get("metadata_attempt_count") or 0)
+
+            if attempts >= max_failed_attempts:
+                return None
+
+            failed_start = _date_or_none(
+                row.get("metadata_requested_start_date")
+            )
+
+            if failed_start is None:
+                return baseline_latest(row) + timedelta(days=1)
+
+            latest_dwd = dwd_latest_or_none(row)
+
+            if latest_dwd is not None and latest_dwd >= failed_start:
+                return latest_dwd + timedelta(days=1)
+
+            return failed_start
+
+        return effective_latest(row) + timedelta(days=1)
+
+    def reason(row) -> str:
+        status = row.get("metadata_status")
+
+        if status == "failed":
+            attempts = int(row.get("metadata_attempt_count") or 0)
+
+            if attempts >= max_failed_attempts:
+                return "failed_retry_limit_exceeded"
+
+            return "retry_failed_window"
+
+        if status == "skipped":
+            return "metadata_skipped"
+
+        metadata_checked = _date_or_none(
+            row.get("metadata_checked_through_date")
+        )
+        latest_dwd = _date_or_none(row.get("latest_dwd_date"))
+
+        if status == "empty" and metadata_checked is not None:
+            return "metadata_empty_checked_through"
+
+        if metadata_checked is not None and (
+            latest_dwd is None or metadata_checked > latest_dwd
+        ):
+            return "metadata_checked_through"
+
+        if latest_dwd is None:
+            return "no_dwd_rows"
+
+        return "dwd_lag"
+
+    merged["request_start_date"] = merged.apply(request_start, axis=1)
     merged["request_end_date"] = latest_complete_eod_date
+    merged["reason"] = merged.apply(reason, axis=1)
 
     tasks = merged[
-        merged["request_start_date"] <= merged["request_end_date"]
+        merged["request_start_date"].notna()
+        & (merged["request_start_date"] <= merged["request_end_date"])
     ].copy()
 
     if tasks.empty:
-        return _empty_gap_tasks()
+        return pd.DataFrame(columns=output_columns)
 
     tasks["source"] = source
     tasks["dataset_name"] = dataset_name
-    tasks["reason"] = tasks["latest_dwd_date"].apply(
-        lambda x: "no_dwd_rows" if pd.isna(x) else "dwd_lag"
-    )
     tasks["generated_at_utc"] = pd.Timestamp.now(tz="UTC")
 
-    tasks = tasks[
-        [
-            "source",
-            "dataset_name",
-            "ticker",
-            "security_id",
-            "latest_dwd_date",
-            "request_start_date",
-            "request_end_date",
-            "reason",
-            "generated_at_utc",
-        ]
-    ].sort_values(["ticker", "security_id"])
+    tasks = tasks[output_columns].sort_values(["ticker", "security_id"])
 
     return tasks.reset_index(drop=True)
 
@@ -530,6 +839,15 @@ def parse_args() -> argparse.Namespace:
         help="Print summary without writing output Parquet files.",
     )
 
+    parser.add_argument(
+        "--ignore-postgres-metadata",
+        action="store_true",
+        help=(
+            "Ignore Postgres operational metadata and generate tasks "
+            "from local DWD only. Intended for debugging only."
+        ),
+    )
+
     return parser.parse_args()
 
 
@@ -565,6 +883,23 @@ def main() -> None:
 
     latest_dwd_dates = load_latest_dwd_dates(config.dwd_price_root)
 
+    latest_window_metadata = _empty_latest_window_metadata()
+
+    if config.use_postgres_metadata and not args.ignore_postgres_metadata:
+        metadata_dsn = os.getenv(config.metadata_dsn_env_var)
+
+        if not metadata_dsn:
+            raise RuntimeError(
+                f"{config.metadata_dsn_env_var} is required because "
+                "price_update.metadata.use_postgres is true"
+            )
+
+        latest_window_metadata = load_latest_window_metadata(
+            metadata_dsn,
+            source=config.source,
+            dataset_name=config.dataset_name,
+        )
+
     tasks = build_price_gap_tasks(
         bootstrap_tasks=eligible_bootstrap_tasks,
         latest_dwd_dates=latest_dwd_dates,
@@ -572,6 +907,8 @@ def main() -> None:
         dataset_name=config.dataset_name,
         bootstrap_anchor_date=config.bootstrap_anchor_date,
         latest_complete_eod_date=config.latest_complete_eod_date,
+        latest_window_metadata=latest_window_metadata,
+        max_failed_attempts=config.max_failed_attempts,
     )
 
     print_summary(

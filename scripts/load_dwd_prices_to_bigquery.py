@@ -5,9 +5,7 @@ import os
 from pathlib import Path
 
 from dotenv import load_dotenv
-from google.cloud import bigquery
-from google.cloud import storage
-
+from google.cloud import bigquery, storage
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 ENV_PATH = PROJECT_ROOT / ".env"

@@ -3,7 +3,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import os
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -11,7 +11,6 @@ import pandas as pd
 import yaml
 from dotenv import load_dotenv
 from google.cloud import storage
-
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 ENV_PATH = PROJECT_ROOT / ".env"
@@ -150,7 +149,7 @@ def get_requested_window(
         else:
             # Legacy behavior for the already-completed Week 7 pilot.
             # Do not use this path for the formal Week 8 bootstrap.
-            requested_end_date = datetime.now(timezone.utc).date()
+            requested_end_date = datetime.now(UTC).date()
 
     else:
         raise ValueError(
@@ -305,7 +304,7 @@ def build_backfill_task_list(
         limit=limit,
     )
 
-    created_at = datetime.now(timezone.utc).isoformat()
+    created_at = datetime.now(UTC).isoformat()
 
     output = pd.DataFrame(index=df.index)
 

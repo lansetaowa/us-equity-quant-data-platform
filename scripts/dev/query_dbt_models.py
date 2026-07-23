@@ -4,7 +4,6 @@ from pathlib import Path
 
 import duckdb
 
-
 DBT_DUCKDB_PATH = Path("data/dbt/quant.duckdb")
 
 """

@@ -5,8 +5,7 @@ import os
 from pathlib import Path
 
 from dotenv import load_dotenv
-from google.cloud import bigquery
-from google.cloud import storage
+from google.cloud import bigquery, storage
 
 from quant_platform.paths.data_lake import (
     DATA_ROOT,
@@ -35,7 +34,6 @@ from quant_platform.warehouse.price_incremental import (
     validate_target_after_update,
     validate_target_table_definition,
 )
-
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 ENV_PATH = PROJECT_ROOT / ".env"

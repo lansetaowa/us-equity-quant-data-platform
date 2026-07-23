@@ -4,7 +4,6 @@ from pathlib import Path
 
 from quant_platform.paths.data_lake import to_gcs_object_path
 
-
 SOURCE = "tiingo"
 DATASET_NAME = "equity_price_daily"
 DEFAULT_WINDOWED_PRICE_FILENAME = "prices.json"

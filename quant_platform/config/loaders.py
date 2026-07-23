@@ -7,7 +7,6 @@ from typing import Any
 
 import yaml
 
-
 YamlMapping = dict[str, Any]
 
 

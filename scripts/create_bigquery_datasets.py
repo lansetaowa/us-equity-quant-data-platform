@@ -9,7 +9,6 @@ import yaml
 from dotenv import load_dotenv
 from google.cloud import bigquery
 
-
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 CLOUD_CONFIG_PATH = PROJECT_ROOT / "configs" / "cloud.yml"
 ENV_PATH = PROJECT_ROOT / ".env"

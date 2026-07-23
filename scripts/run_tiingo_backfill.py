@@ -17,7 +17,6 @@ import yaml
 from dotenv import load_dotenv
 from google.cloud import storage
 
-
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 ENV_PATH = PROJECT_ROOT / ".env"
 CONFIG_PATH = PROJECT_ROOT / "configs" / "backfill.yml"
@@ -882,7 +881,7 @@ def run_backfill(args: argparse.Namespace) -> None:
             except Exception as exc:
                 mark_symbol_failed(conn, row_series, repr(exc))
                 conn.commit()
-                print(f"Failed {ticker}: {repr(exc)}")
+                print(f"Failed {ticker}: {exc!r}")
 
             if sleep_between > 0:
                 time.sleep(sleep_between)

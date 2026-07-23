@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from datetime import date
 
 import pandas as pd
 import pytest
@@ -9,6 +10,7 @@ from quant_platform.metadata.price_update import (
     build_price_update_run_summary,
     load_end_to_end_artifact_summary,
     load_price_update_report,
+    split_tasks_for_run_resume,
 )
 
 
@@ -205,3 +207,144 @@ def test_artifact_validation_rejects_bad_gcs(tmp_path):
 
     with pytest.raises(ValueError, match="GCS post-sync validation"):
         load_end_to_end_artifact_summary(root)
+
+def test_split_tasks_for_run_resume_skips_completed_and_retries_failed():
+    tasks = pd.DataFrame(
+        [
+            {
+                "source": "tiingo",
+                "dataset_name": "equity_price_daily",
+                "ticker": "AAPL",
+                "security_id": "tiingo:AAPL",
+                "request_start_date": date(2026, 6, 23),
+                "request_end_date": date(2026, 7, 17),
+            },
+            {
+                "source": "tiingo",
+                "dataset_name": "equity_price_daily",
+                "ticker": "EMPTY",
+                "security_id": "tiingo:EMPTY",
+                "request_start_date": date(2026, 6, 23),
+                "request_end_date": date(2026, 7, 17),
+            },
+            {
+                "source": "tiingo",
+                "dataset_name": "equity_price_daily",
+                "ticker": "FAILME",
+                "security_id": "tiingo:FAILME",
+                "request_start_date": date(2026, 6, 23),
+                "request_end_date": date(2026, 7, 17),
+            },
+            {
+                "source": "tiingo",
+                "dataset_name": "equity_price_daily",
+                "ticker": "NEWONE",
+                "security_id": "tiingo:NEWONE",
+                "request_start_date": date(2026, 6, 23),
+                "request_end_date": date(2026, 7, 17),
+            },
+        ]
+    )
+
+    existing_results = pd.DataFrame(
+        [
+            {
+                "source": "tiingo",
+                "dataset_name": "equity_price_daily",
+                "ticker": "AAPL",
+                "security_id": "tiingo:AAPL",
+                "request_start_date": date(2026, 6, 23),
+                "request_end_date": date(2026, 7, 17),
+                "status": "success",
+                "action": "downloaded",
+                "row_count": 18,
+                "completed_at_utc": "2026-07-17T23:00:00Z",
+            },
+            {
+                "source": "tiingo",
+                "dataset_name": "equity_price_daily",
+                "ticker": "EMPTY",
+                "security_id": "tiingo:EMPTY",
+                "request_start_date": date(2026, 6, 23),
+                "request_end_date": date(2026, 7, 17),
+                "status": "empty",
+                "action": "empty",
+                "row_count": 0,
+                "completed_at_utc": "2026-07-17T23:01:00Z",
+            },
+            {
+                "source": "tiingo",
+                "dataset_name": "equity_price_daily",
+                "ticker": "FAILME",
+                "security_id": "tiingo:FAILME",
+                "request_start_date": date(2026, 6, 23),
+                "request_end_date": date(2026, 7, 17),
+                "status": "failed",
+                "action": "failed",
+                "row_count": None,
+                "completed_at_utc": "2026-07-17T23:02:00Z",
+            },
+        ]
+    )
+
+    pending, completed = split_tasks_for_run_resume(
+        tasks,
+        existing_results,
+    )
+
+    assert set(pending["ticker"]) == {"FAILME", "NEWONE"}
+    assert set(completed["ticker"]) == {"AAPL", "EMPTY"}
+
+    by_ticker = completed.set_index("ticker")
+
+    assert by_ticker.loc["AAPL", "prior_action"] == "downloaded"
+    assert by_ticker.loc["EMPTY", "prior_action"] == "empty"
+
+def test_split_tasks_for_run_resume_rejects_duplicate_existing_results():
+    tasks = pd.DataFrame(
+        [
+            {
+                "source": "tiingo",
+                "dataset_name": "equity_price_daily",
+                "ticker": "AAPL",
+                "security_id": "tiingo:AAPL",
+                "request_start_date": date(2026, 6, 23),
+                "request_end_date": date(2026, 7, 17),
+            }
+        ]
+    )
+
+    existing_results = pd.DataFrame(
+        [
+            {
+                "source": "tiingo",
+                "dataset_name": "equity_price_daily",
+                "ticker": "AAPL",
+                "security_id": "tiingo:AAPL",
+                "request_start_date": date(2026, 6, 23),
+                "request_end_date": date(2026, 7, 17),
+                "status": "success",
+                "action": "downloaded",
+                "row_count": 18,
+                "completed_at_utc": "2026-07-17T23:00:00Z",
+            },
+            {
+                "source": "tiingo",
+                "dataset_name": "equity_price_daily",
+                "ticker": "AAPL",
+                "security_id": "tiingo:AAPL",
+                "request_start_date": date(2026, 6, 23),
+                "request_end_date": date(2026, 7, 17),
+                "status": "success",
+                "action": "existing",
+                "row_count": 18,
+                "completed_at_utc": "2026-07-17T23:01:00Z",
+            },
+        ]
+    )
+
+    with pytest.raises(ValueError, match="duplicate task keys"):
+        split_tasks_for_run_resume(
+            tasks,
+            existing_results,
+        )

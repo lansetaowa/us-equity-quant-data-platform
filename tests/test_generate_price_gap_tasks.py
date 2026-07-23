@@ -6,6 +6,7 @@ import pandas as pd
 import pytest
 
 from quant_platform.prices.gap_tasks import (
+    _max_date_or_none,
     attach_daily_update_eligibility,
     build_price_gap_tasks,
 )
@@ -373,3 +374,243 @@ def test_attach_daily_update_eligibility_uses_dim_security_end_date_only():
     assert result.loc[0, "end_date"] == date(2026, 6, 11)
     assert "end_date_x" not in result.columns
     assert "end_date_y" not in result.columns
+
+def test_build_price_gap_tasks_uses_empty_metadata_checked_through():
+    bootstrap = pd.DataFrame(
+        {
+            "ticker": ["EMPTY"],
+            "security_id": ["tiingo:EMPTY"],
+        }
+    )
+
+    latest = pd.DataFrame(
+        {
+            "ticker": ["EMPTY"],
+            "security_id": ["tiingo:EMPTY"],
+            "latest_dwd_date": [date(2026, 6, 11)],
+        }
+    )
+
+    metadata = pd.DataFrame(
+        {
+            "ticker": ["EMPTY"],
+            "security_id": ["tiingo:EMPTY"],
+            "metadata_status": ["empty"],
+            "metadata_requested_start_date": [date(2026, 6, 12)],
+            "metadata_requested_end_date": [date(2026, 6, 22)],
+            "metadata_last_successful_date": [pd.NaT],
+            "metadata_last_price_date": [pd.NaT],
+            "metadata_attempt_count": [1],
+            "metadata_last_run_id": ["price_download_20260623T025906Z"],
+            "metadata_last_action": ["empty"],
+            "metadata_checked_through_date": [date(2026, 6, 22)],
+        }
+    )
+
+    tasks = build_price_gap_tasks(
+        bootstrap_tasks=bootstrap,
+        latest_dwd_dates=latest,
+        source="tiingo",
+        dataset_name="equity_price_daily",
+        bootstrap_anchor_date=date(2026, 6, 11),
+        latest_complete_eod_date=date(2026, 7, 16),
+        latest_window_metadata=metadata,
+        max_failed_attempts=3,
+    )
+
+    assert len(tasks) == 1
+    assert tasks.loc[0, "request_start_date"] == date(2026, 6, 23)
+    assert tasks.loc[0, "request_end_date"] == date(2026, 7, 16)
+    assert tasks.loc[0, "reason"] == "metadata_empty_checked_through"
+
+def test_build_price_gap_tasks_retries_failed_window():
+    bootstrap = pd.DataFrame(
+        {
+            "ticker": ["FAILME"],
+            "security_id": ["tiingo:FAILME"],
+        }
+    )
+
+    latest = pd.DataFrame(
+        {
+            "ticker": ["FAILME"],
+            "security_id": ["tiingo:FAILME"],
+            "latest_dwd_date": [date(2026, 6, 22)],
+        }
+    )
+
+    metadata = pd.DataFrame(
+        {
+            "ticker": ["FAILME"],
+            "security_id": ["tiingo:FAILME"],
+            "metadata_status": ["failed"],
+            "metadata_requested_start_date": [date(2026, 6, 23)],
+            "metadata_requested_end_date": [date(2026, 7, 16)],
+            "metadata_last_successful_date": [pd.NaT],
+            "metadata_last_price_date": [pd.NaT],
+            "metadata_attempt_count": [1],
+            "metadata_last_run_id": ["test_run"],
+            "metadata_last_action": ["failed"],
+            "metadata_checked_through_date": [pd.NaT],
+        }
+    )
+
+    tasks = build_price_gap_tasks(
+        bootstrap_tasks=bootstrap,
+        latest_dwd_dates=latest,
+        source="tiingo",
+        dataset_name="equity_price_daily",
+        bootstrap_anchor_date=date(2026, 6, 11),
+        latest_complete_eod_date=date(2026, 7, 16),
+        latest_window_metadata=metadata,
+        max_failed_attempts=3,
+    )
+
+    assert len(tasks) == 1
+    assert tasks.loc[0, "request_start_date"] == date(2026, 6, 23)
+    assert tasks.loc[0, "reason"] == "retry_failed_window"
+
+def test_build_price_gap_tasks_excludes_failed_after_retry_limit():
+    bootstrap = pd.DataFrame(
+        {
+            "ticker": ["FAILME"],
+            "security_id": ["tiingo:FAILME"],
+        }
+    )
+
+    latest = pd.DataFrame(
+        {
+            "ticker": ["FAILME"],
+            "security_id": ["tiingo:FAILME"],
+            "latest_dwd_date": [date(2026, 6, 22)],
+        }
+    )
+
+    metadata = pd.DataFrame(
+        {
+            "ticker": ["FAILME"],
+            "security_id": ["tiingo:FAILME"],
+            "metadata_status": ["failed"],
+            "metadata_requested_start_date": [date(2026, 6, 23)],
+            "metadata_requested_end_date": [date(2026, 7, 16)],
+            "metadata_last_successful_date": [pd.NaT],
+            "metadata_last_price_date": [pd.NaT],
+            "metadata_attempt_count": [3],
+            "metadata_last_run_id": ["test_run"],
+            "metadata_last_action": ["failed"],
+            "metadata_checked_through_date": [pd.NaT],
+        }
+    )
+
+    tasks = build_price_gap_tasks(
+        bootstrap_tasks=bootstrap,
+        latest_dwd_dates=latest,
+        source="tiingo",
+        dataset_name="equity_price_daily",
+        bootstrap_anchor_date=date(2026, 6, 11),
+        latest_complete_eod_date=date(2026, 7, 16),
+        latest_window_metadata=metadata,
+        max_failed_attempts=3,
+    )
+
+    assert tasks.empty
+
+def test_build_price_gap_tasks_excludes_skipped_metadata():
+    bootstrap = pd.DataFrame(
+        {
+            "ticker": ["SKIPME"],
+            "security_id": ["tiingo:SKIPME"],
+        }
+    )
+
+    latest = pd.DataFrame(
+        {
+            "ticker": ["SKIPME"],
+            "security_id": ["tiingo:SKIPME"],
+            "latest_dwd_date": [date(2026, 6, 22)],
+        }
+    )
+
+    metadata = pd.DataFrame(
+        {
+            "ticker": ["SKIPME"],
+            "security_id": ["tiingo:SKIPME"],
+            "metadata_status": ["skipped"],
+            "metadata_requested_start_date": [date(2026, 6, 23)],
+            "metadata_requested_end_date": [date(2026, 7, 16)],
+            "metadata_last_successful_date": [pd.NaT],
+            "metadata_last_price_date": [pd.NaT],
+            "metadata_attempt_count": [1],
+            "metadata_last_run_id": ["test_run"],
+            "metadata_last_action": ["skipped"],
+            "metadata_checked_through_date": [date(2026, 7, 16)],
+        }
+    )
+
+    tasks = build_price_gap_tasks(
+        bootstrap_tasks=bootstrap,
+        latest_dwd_dates=latest,
+        source="tiingo",
+        dataset_name="equity_price_daily",
+        bootstrap_anchor_date=date(2026, 6, 11),
+        latest_complete_eod_date=date(2026, 7, 16),
+        latest_window_metadata=metadata,
+        max_failed_attempts=3,
+    )
+
+    assert tasks.empty
+
+def test_max_date_or_none_ignores_nat_values():
+    assert _max_date_or_none(
+        [
+            pd.NaT,
+            None,
+            date(2026, 6, 22),
+        ]
+    ) == date(2026, 6, 22)
+
+def test_build_price_gap_tasks_handles_nat_metadata_checked_date():
+    bootstrap = pd.DataFrame(
+        {
+            "ticker": ["AAPL"],
+            "security_id": ["tiingo:AAPL"],
+        }
+    )
+
+    latest = pd.DataFrame(
+        {
+            "ticker": ["AAPL"],
+            "security_id": ["tiingo:AAPL"],
+            "latest_dwd_date": [date(2026, 6, 22)],
+        }
+    )
+
+    metadata = pd.DataFrame(
+        {
+            "ticker": ["AAPL"],
+            "security_id": ["tiingo:AAPL"],
+            "metadata_status": ["success"],
+            "metadata_requested_start_date": [date(2026, 6, 12)],
+            "metadata_requested_end_date": [date(2026, 6, 22)],
+            "metadata_last_successful_date": [pd.NaT],
+            "metadata_last_price_date": [date(2026, 6, 22)],
+            "metadata_attempt_count": [1],
+            "metadata_last_run_id": ["price_download_20260623T025906Z"],
+            "metadata_last_action": ["downloaded"],
+            "metadata_checked_through_date": [pd.NaT],
+        }
+    )
+
+    tasks = build_price_gap_tasks(
+        bootstrap_tasks=bootstrap,
+        latest_dwd_dates=latest,
+        source="tiingo",
+        dataset_name="equity_price_daily",
+        bootstrap_anchor_date=date(2026, 6, 11),
+        latest_complete_eod_date=date(2026, 7, 16),
+        latest_window_metadata=metadata,
+        max_failed_attempts=3,
+    )
+
+    assert len(tasks) == 1
+    assert tasks.loc[0, "request_start_date"] == date(2026, 6, 23)

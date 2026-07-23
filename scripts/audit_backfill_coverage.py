@@ -12,7 +12,6 @@ import psycopg
 import yaml
 from dotenv import load_dotenv
 
-
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 ENV_PATH = PROJECT_ROOT / ".env"
 CONFIG_PATH = PROJECT_ROOT / "configs" / "backfill.yml"
@@ -159,18 +158,17 @@ def fetch_symbol_status(
         ORDER BY ticker;
     """
 
-    with psycopg.connect(dsn) as conn:
-        with conn.cursor() as cur:
-            cur.execute(
-                sql,
-                (
-                    source,
-                    dataset_name,
-                    requested_start_date,
-                    requested_end_date,
-                ),
-            )
-            rows = cur.fetchall()
+    with psycopg.connect(dsn) as conn, conn.cursor() as cur:
+        cur.execute(
+            sql,
+            (
+                source,
+                dataset_name,
+                requested_start_date,
+                requested_end_date,
+            ),
+        )
+        rows = cur.fetchall()
 
     columns = [
         "source",
