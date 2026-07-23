@@ -139,9 +139,7 @@ def test_build_partition_publish_items(
         "year=2026/month=06/"
     )
     assert items[0].object_names == (
-        "dwd/equity_price_daily/"
-        "year=2026/month=06/"
-        "part-000.parquet",
+        "dwd/equity_price_daily/year=2026/month=06/part-000.parquet",
     )
 
 
