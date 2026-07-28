@@ -107,3 +107,20 @@ Initial filters:
 Day 1 creates the config and design doc and profiles the current local data.
 
 No reference snapshots, universe tables, DWD files, GCS objects, or BigQuery tables are modified on Day 1.
+
+## Day 2 — Supported tickers and dim_security snapshots
+
+Reference data is now snapshot-aware.
+
+Supported ticker ingestion writes:
+
+- dated snapshot: `data/ods/source=tiingo/dataset=supported_tickers/snapshot_date=YYYY-MM-DD/supported_tickers.csv`
+- latest operational copy: `data/ods/source=tiingo/dataset=supported_tickers/supported_tickers.csv`
+
+Security master build writes:
+
+- dated snapshot: `data/dwd/security_master_snapshots/snapshot_date=YYYY-MM-DD/dim_security.parquet`
+- latest operational copy: `data/dwd/security_master/dim_security.parquet`
+
+The latest copy preserves compatibility with existing daily operational scripts.
+The snapshoted copy provides auditability and monthly reference-data history.
