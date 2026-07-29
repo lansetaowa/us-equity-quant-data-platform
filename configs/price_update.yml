@@ -53,3 +53,6 @@ price_update:
     use_postgres: true
     dsn_env_var: "POSTGRES_DSN"
 
+  coverage_universe:
+    name: "us_equity_coverage"
+    input_path: "data/dwd/security_master/candidate_security_pool.parquet"

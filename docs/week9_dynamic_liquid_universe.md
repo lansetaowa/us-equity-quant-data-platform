@@ -143,3 +143,23 @@ The snapshot copy provides auditability and monthly reference-data history.
 
 For the July 2026 refresh, the candidate pool uses the `dim_security` snapshot
 for snapshot date `2026-07-28`.
+
+## Day 4 — Coverage universe integration
+
+The daily price gap generator now uses the refreshed latest candidate pool as
+the broad coverage universe.
+
+Configured source:
+
+- `data/dwd/security_master/candidate_security_pool.parquet`
+
+This replaces the older bootstrap-candidates file as the default daily price
+coverage input.
+
+The candidate pool remains distinct from the liquidity universe:
+
+- candidate pool / coverage universe: used for price download
+- liquidity universe: used for research, factors, labels, and strategies
+
+Day 4 validated price-gap generation in dry-run mode against the refreshed
+candidate pool. No live Tiingo price download was run.

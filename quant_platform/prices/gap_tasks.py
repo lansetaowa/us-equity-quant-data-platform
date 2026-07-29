@@ -87,6 +87,10 @@ def load_price_gap_task_config(
     config_data = load_yaml(config_path)
 
     price_update = require_mapping(config_data, "price_update")
+    resolved_coverage_universe_path = resolve_coverage_universe_path(
+        price_update,
+        bootstrap_task_list_path,
+    )
     daily_update_universe = optional_mapping(
         price_update,
         "daily_update_universe",
@@ -142,7 +146,7 @@ def load_price_gap_task_config(
         dataset_name=dataset_name,
         bootstrap_anchor_date=parse_iso_date(bootstrap_anchor_raw),
         latest_complete_eod_date=latest_complete_eod_date,
-        bootstrap_task_list_path=bootstrap_task_list_path,
+        bootstrap_task_list_path=resolved_coverage_universe_path,
         dim_security_path=dim_security_path,
         dwd_price_root=dwd_price_root,
         output_path=output_path,
@@ -152,6 +156,28 @@ def load_price_gap_task_config(
         metadata_dsn_env_var=metadata_dsn_env_var,
         max_failed_attempts=max_failed_attempts,
     )
+
+def resolve_coverage_universe_path(
+    price_update_config: dict,
+    default_path: Path,
+) -> Path:
+    """Resolve the daily price coverage-universe input path.
+
+    The daily price update should use the broad candidate pool / coverage
+    universe, not the point-in-time liquidity universe.
+    """
+    coverage_config = optional_mapping(
+        price_update_config,
+        "coverage_universe",
+        context="price_update",
+    )
+
+    configured_path = coverage_config.get("input_path")
+
+    if configured_path is None or str(configured_path).strip() == "":
+        return default_path
+
+    return Path(str(configured_path).strip())
 
 def _standardize_symbol_keys(df: pd.DataFrame) -> pd.DataFrame:
     required_columns = {"ticker", "security_id"}
@@ -929,3 +955,4 @@ def main() -> None:
     save_frame(excluded_bootstrap_tasks, config.excluded_output_path)
 
     print("\nSaved price gap task list and exclusion list.")
+    print(f"coverage_universe_path: {config.bootstrap_task_list_path}")

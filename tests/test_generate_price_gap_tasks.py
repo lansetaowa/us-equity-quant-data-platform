@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import date
+from pathlib import Path
 
 import pandas as pd
 import pytest
@@ -9,6 +10,7 @@ from quant_platform.prices.gap_tasks import (
     _max_date_or_none,
     attach_daily_update_eligibility,
     build_price_gap_tasks,
+    resolve_coverage_universe_path,
 )
 
 
@@ -614,3 +616,34 @@ def test_build_price_gap_tasks_handles_nat_metadata_checked_date():
 
     assert len(tasks) == 1
     assert tasks.loc[0, "request_start_date"] == date(2026, 6, 23)
+
+def test_resolve_coverage_universe_path_uses_configured_path():
+    config = {
+        "coverage_universe": {
+            "input_path": "data/dwd/security_master/candidate_security_pool.parquet"
+        }
+    }
+
+    result = resolve_coverage_universe_path(
+        config,
+        Path("data/dwd/security_master/backfill_task_list_bootstrap_candidates.parquet"),
+    )
+
+    assert result == Path(
+        "data/dwd/security_master/candidate_security_pool.parquet"
+    )
+
+
+def test_resolve_coverage_universe_path_falls_back_to_default():
+    default = Path(
+        "data/dwd/security_master/backfill_task_list_bootstrap_candidates.parquet"
+    )
+
+    assert resolve_coverage_universe_path({}, default) == default
+    assert (
+        resolve_coverage_universe_path(
+            {"coverage_universe": {"input_path": ""}},
+            default,
+        )
+        == default
+    )
