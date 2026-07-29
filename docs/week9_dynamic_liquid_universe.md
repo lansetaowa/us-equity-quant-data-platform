@@ -124,3 +124,22 @@ Security master build writes:
 
 The latest copy preserves compatibility with existing daily operational scripts.
 The snapshoted copy provides auditability and monthly reference-data history.
+
+## Day 3 — Candidate pool snapshots
+
+Candidate pool generation is now snapshot-aware.
+
+The candidate pool is the broad coverage universe used for operational price
+download. It remains separate from the liquidity universe used for research and
+strategy work.
+
+Candidate pool build writes:
+
+- dated snapshot: `data/dwd/candidate_pool_snapshots/snapshot_date=YYYY-MM-DD/candidate_security_pool.parquet`
+- latest operational copy: `data/dwd/security_master/candidate_security_pool.parquet`
+
+The latest copy preserves compatibility with existing daily operational scripts.
+The snapshot copy provides auditability and monthly reference-data history.
+
+For the July 2026 refresh, the candidate pool uses the `dim_security` snapshot
+for snapshot date `2026-07-28`.

@@ -29,6 +29,15 @@ DEFAULT_OUTPUT_PATH = (
 
 GCS_DESTINATION = "dwd/security_master/candidate_security_pool.parquet"
 
+DEFAULT_SNAPSHOT_ROOT = (
+    PROJECT_ROOT
+    / "data"
+    / "dwd"
+    / "candidate_pool_snapshots"
+)
+
+DEFAULT_SNAPSHOT_GCS_PREFIX = "dwd/candidate_pool_snapshots"
+
 
 def load_config(config_path: Path = CONFIG_PATH) -> dict[str, Any]:
     """Load security master config."""
@@ -57,6 +66,43 @@ def require_config_list(config: dict[str, Any], key_path: list[str]) -> list[str
 
     return [str(x).strip() for x in current]
 
+def normalize_snapshot_date(value: str | None) -> str:
+    """Return YYYY-MM-DD snapshot date."""
+    if value is None or not str(value).strip():
+        return datetime.now(UTC).date().isoformat()
+
+    parsed = pd.to_datetime(
+        str(value).strip(),
+        errors="coerce",
+    )
+
+    if pd.isna(parsed):
+        raise ValueError(f"Invalid snapshot date: {value!r}")
+
+    return pd.Timestamp(parsed).date().isoformat()
+
+
+def build_candidate_pool_snapshot_path(
+    snapshot_root: Path,
+    snapshot_date: str,
+) -> Path:
+    """Build dated candidate-pool snapshot path."""
+    return (
+        snapshot_root
+        / f"snapshot_date={snapshot_date}"
+        / "candidate_security_pool.parquet"
+    )
+
+
+def build_candidate_pool_snapshot_gcs_destination(
+    snapshot_date: str,
+) -> str:
+    """Build dated candidate-pool snapshot GCS object name."""
+    return (
+        f"{DEFAULT_SNAPSHOT_GCS_PREFIX}/"
+        f"snapshot_date={snapshot_date}/"
+        "candidate_security_pool.parquet"
+    )
 
 def normalize_string_series(series: pd.Series) -> pd.Series:
     """Normalize string values for filtering."""
@@ -370,12 +416,16 @@ def main() -> None:
     )
     parser.add_argument(
         "--input",
+        "--input-path",
+        dest="input",
         type=str,
         default=str(DEFAULT_DIM_SECURITY_PATH),
         help="Path to dim_security parquet.",
     )
     parser.add_argument(
         "--output",
+        "--output-path",
+        dest="output",
         type=str,
         default=str(DEFAULT_OUTPUT_PATH),
         help="Output path for candidate_security_pool parquet.",
@@ -390,12 +440,44 @@ def main() -> None:
         action="store_true",
         help="Print planned GCS upload without uploading.",
     )
+    parser.add_argument(
+        "--snapshot-date",
+        type=str,
+        default=None,
+        help=(
+            "Reference-data snapshot date in YYYY-MM-DD format. "
+            "Defaults to today's UTC date."
+        ),
+    )
+    parser.add_argument(
+        "--snapshot-root",
+        type=str,
+        default=str(DEFAULT_SNAPSHOT_ROOT),
+        help="Root directory for dated candidate-pool snapshots.",
+    )
+    parser.add_argument(
+        "--no-write-latest",
+        action="store_true",
+        help=(
+            "Write only the dated snapshot and do not refresh "
+            "data/dwd/security_master/candidate_security_pool.parquet."
+        ),
+    )
     args = parser.parse_args()
 
     load_dotenv(ENV_PATH)
 
+    snapshot_date = normalize_snapshot_date(args.snapshot_date)
+    write_latest = not args.no_write_latest
+
     input_path = Path(args.input)
-    output_path = Path(args.output)
+    latest_output_path = Path(args.output)
+    snapshot_root = Path(args.snapshot_root)
+
+    snapshot_output_path = build_candidate_pool_snapshot_path(
+        snapshot_root,
+        snapshot_date,
+    )
 
     if not input_path.exists():
         raise FileNotFoundError(
@@ -408,19 +490,43 @@ def main() -> None:
 
     candidate_pool = build_candidate_pool(dim_security, config)
 
-    output_path.parent.mkdir(parents=True, exist_ok=True)
-    candidate_pool.to_parquet(output_path, index=False)
+    snapshot_output_path.parent.mkdir(parents=True, exist_ok=True)
+    candidate_pool.to_parquet(snapshot_output_path, index=False)
 
-    print_summary(candidate_pool, output_path)
+    if write_latest:
+        latest_output_path.parent.mkdir(parents=True, exist_ok=True)
+        candidate_pool.to_parquet(latest_output_path, index=False)
+
+    print(f"\nSnapshot date: {snapshot_date}")
+    print(f"Wrote candidate_pool snapshot to: {snapshot_output_path}")
+
+    if write_latest:
+        print(f"Wrote latest candidate_pool to: {latest_output_path}")
+    
+    print_summary(
+        candidate_pool,
+        latest_output_path if write_latest else snapshot_output_path,
+    )
 
     if not args.no_gcs:
         bucket_name = os.getenv("GCS_BUCKET", "")
+
         upload_to_gcs(
-            local_path=output_path,
+            local_path=snapshot_output_path,
             bucket_name=bucket_name,
-            destination_blob_name=GCS_DESTINATION,
+            destination_blob_name=build_candidate_pool_snapshot_gcs_destination(
+                snapshot_date
+            ),
             dry_run=args.dry_run_gcs,
         )
+
+        if write_latest:
+            upload_to_gcs(
+                local_path=latest_output_path,
+                bucket_name=bucket_name,
+                destination_blob_name=GCS_DESTINATION,
+                dry_run=args.dry_run_gcs,
+            )
 
 
 if __name__ == "__main__":
