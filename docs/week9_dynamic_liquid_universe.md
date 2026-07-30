@@ -163,3 +163,37 @@ The candidate pool remains distinct from the liquidity universe:
 
 Day 4 validated price-gap generation in dry-run mode against the refreshed
 candidate pool. No live Tiingo price download was run.
+
+## Day 5 — Monthly liquidity metrics
+
+Monthly liquidity metrics are built from canonical DWD daily prices.
+
+Output:
+
+- `data/dws/equity_liquidity_monthly/year=YYYY/month=MM/part-000.parquet`
+
+The builder computes:
+
+- expected trading days from the XNYS calendar
+- trading day coverage
+- median close
+- median dollar volume
+- average dollar volume
+- p20 / p80 dollar volume
+- zero-volume day count
+- complete-month flag
+- liquidity filter pass/fail flags
+- liquidity score
+
+Official metrics exclude incomplete months by default.
+
+Initial filters:
+
+- median close >= 5
+- trading-day coverage >= 80%
+- median dollar volume >= 1,000,000
+- positive volume required
+
+The June 2026 liquidity profile showed that these filters are appropriate for
+a broad prefilter: roughly half of security-month rows pass, and the top 500
+liquid names remain far above the minimum dollar-volume threshold.
