@@ -44,6 +44,7 @@ liquid_universe:
   ranking:
     liquidity_score_method: "median_dollar_volume"
     lookback_months: 3
+    score_aggregation: "median"
 
   universes:
     - name: "us_liquid_100"

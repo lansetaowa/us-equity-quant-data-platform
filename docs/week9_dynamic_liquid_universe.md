@@ -197,3 +197,34 @@ Initial filters:
 The June 2026 liquidity profile showed that these filters are appropriate for
 a broad prefilter: roughly half of security-month rows pass, and the top 500
 liquid names remain far above the minimum dollar-volume threshold.
+
+## Day 6 — Point-in-time liquid universe membership
+
+Point-in-time monthly liquid universe membership is now built from monthly
+liquidity metrics.
+
+Outputs:
+
+- `data/dwd/universe_membership_monthly/universe_name=us_liquid_100/year=YYYY/month=MM/part-000.parquet`
+- `data/dwd/universe_membership_monthly/universe_name=us_liquid_500/year=YYYY/month=MM/part-000.parquet`
+
+Membership rule:
+
+- `membership_month = source_metric_month + 1 month`
+
+This avoids lookahead. For example, June 2026 liquidity metrics define July
+2026 membership.
+
+Ranking:
+
+- score column: `median_dollar_volume`
+- lookback months: 3
+- aggregation: median
+
+Initial universes:
+
+- `us_liquid_100`
+- `us_liquid_500`
+
+The latest official membership month after Day 6 is expected to be July 2026
+when the latest complete metric month is June 2026.
