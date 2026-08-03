@@ -50,6 +50,53 @@ def get_local_ods_root(config: dict[str, Any]) -> Path:
     return PROJECT_ROOT / local_ods_root
 
 
+def normalize_snapshot_date(value: str | None) -> str:
+    """Return YYYY-MM-DD snapshot date."""
+    if value is None or not str(value).strip():
+        return datetime.now(UTC).date().isoformat()
+
+    parsed = pd.to_datetime(
+        str(value).strip(),
+        errors="coerce",
+    )
+
+    if pd.isna(parsed):
+        raise ValueError(f"Invalid snapshot date: {value!r}")
+
+    return pd.Timestamp(parsed).date().isoformat()
+
+
+def build_supported_tickers_paths(
+    local_ods_root: Path,
+    snapshot_date: str,
+) -> dict[str, Path]:
+    """Build snapshot and latest local supported-ticker paths."""
+    return {
+        "snapshot": (
+            local_ods_root
+            / f"snapshot_date={snapshot_date}"
+            / "supported_tickers.csv"
+        ),
+        "latest": local_ods_root / "supported_tickers.csv",
+    }
+
+
+def build_supported_tickers_gcs_destinations(
+    snapshot_date: str,
+) -> dict[str, str]:
+    """Build snapshot and latest GCS supported-ticker object names."""
+    return {
+        "snapshot": (
+            "ods/source=tiingo/dataset=supported_tickers/"
+            f"snapshot_date={snapshot_date}/supported_tickers.csv"
+        ),
+        "latest": (
+            "ods/source=tiingo/dataset=supported_tickers/"
+            "supported_tickers.csv"
+        ),
+    }
+
+
 def download_zip_bytes(url: str = SUPPORTED_TICKERS_URL) -> bytes:
     """Download Tiingo supported_tickers.zip."""
     request = Request(
@@ -148,6 +195,23 @@ def main() -> None:
         action="store_true",
         help="Print planned GCS upload without uploading.",
     )
+    parser.add_argument(
+        "--snapshot-date",
+        type=str,
+        default=None,
+        help=(
+            "Reference-data snapshot date in YYYY-MM-DD format. "
+            "Defaults to today's UTC date."
+        ),
+    )
+    parser.add_argument(
+        "--no-write-latest",
+        action="store_true",
+        help=(
+            "Write only the dated snapshot and do not refresh "
+            "the latest operational supported_tickers.csv copy."
+        ),
+    )
     args = parser.parse_args()
 
     load_dotenv(ENV_PATH)
@@ -155,28 +219,49 @@ def main() -> None:
     config = load_config()
     local_ods_root = get_local_ods_root(config)
 
-    local_output_path = local_ods_root / "supported_tickers.csv"
-    gcs_destination = (
-        "ods/source=tiingo/dataset=supported_tickers/supported_tickers.csv"
+    snapshot_date = normalize_snapshot_date(args.snapshot_date)
+    write_latest = not args.no_write_latest
+
+    local_paths = build_supported_tickers_paths(
+        local_ods_root,
+        snapshot_date,
+    )
+    gcs_destinations = build_supported_tickers_gcs_destinations(
+        snapshot_date,
     )
 
+    print(f"Snapshot date: {snapshot_date}")
     print(f"Downloading Tiingo supported tickers from: {SUPPORTED_TICKERS_URL}")
+
     zip_bytes = download_zip_bytes()
     csv_bytes = extract_supported_tickers_csv(zip_bytes)
 
-    write_local_csv(csv_bytes, local_output_path)
-    print(f"Saved local CSV: {local_output_path}")
+    write_local_csv(csv_bytes, local_paths["snapshot"])
+    print(f"Saved snapshot CSV: {local_paths['snapshot']}")
 
-    summarize_csv(local_output_path)
+    if write_latest:
+        write_local_csv(csv_bytes, local_paths["latest"])
+        print(f"Saved latest CSV: {local_paths['latest']}")
+
+    summarize_csv(local_paths["snapshot"])
 
     if not args.no_gcs:
         bucket_name = os.getenv("GCS_BUCKET", "")
+
         upload_to_gcs(
-            local_path=local_output_path,
+            local_path=local_paths["snapshot"],
             bucket_name=bucket_name,
-            destination_blob_name=gcs_destination,
+            destination_blob_name=gcs_destinations["snapshot"],
             dry_run=args.dry_run_gcs,
         )
+
+        if write_latest:
+            upload_to_gcs(
+                local_path=local_paths["latest"],
+                bucket_name=bucket_name,
+                destination_blob_name=gcs_destinations["latest"],
+                dry_run=args.dry_run_gcs,
+            )
 
     loaded_at = datetime.now(UTC).isoformat()
     print(f"\nCompleted supported tickers ingestion at {loaded_at}")

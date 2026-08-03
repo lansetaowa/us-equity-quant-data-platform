@@ -1,0 +1,53 @@
+reference_data:
+  snapshot_date: null
+
+  supported_tickers:
+    source: "tiingo"
+    dataset_name: "supported_tickers"
+    ods_snapshot_root: "data/ods/source=tiingo/dataset=supported_tickers"
+    gcs_snapshot_prefix: "ods/source=tiingo/dataset=supported_tickers"
+
+  security_master:
+    latest_dim_security_path: "data/dwd/security_master/dim_security.parquet"
+    snapshot_root: "data/dwd/security_master_snapshots"
+    gcs_snapshot_prefix: "dwd/security_master_snapshots"
+    write_latest: true
+
+  candidate_pool:
+    latest_candidate_pool_path: "data/dwd/security_master/candidate_security_pool.parquet"
+    snapshot_root: "data/dwd/candidate_pool_snapshots"
+    gcs_snapshot_prefix: "dwd/candidate_pool_snapshots"
+    write_latest: true
+
+  coverage_universe:
+    name: "us_equity_coverage"
+    purpose: "broad_price_download"
+    use_for_price_download: true
+
+liquid_universe:
+  source_price_dwd_root: "data/dwd/equity_price_daily"
+
+  liquidity_monthly_output_root: "data/dws/equity_liquidity_monthly"
+  universe_membership_output_root: "data/dwd/universe_membership_monthly"
+
+  calendar: "XNYS"
+
+  # Official universes should use complete prior-month data only.
+  include_incomplete_months: false
+
+  filters:
+    min_median_close: 5.0
+    min_trading_day_coverage: 0.80
+    min_median_dollar_volume: 1000000.0
+    require_positive_volume_days: true
+
+  ranking:
+    liquidity_score_method: "median_dollar_volume"
+    lookback_months: 3
+    score_aggregation: "median"
+
+  universes:
+    - name: "us_liquid_100"
+      size: 100
+    - name: "us_liquid_500"
+      size: 500
