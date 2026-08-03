@@ -228,3 +228,47 @@ Initial universes:
 
 The latest official membership month after Day 6 is expected to be July 2026
 when the latest complete metric month is June 2026.
+
+## Day 7 — Final validation
+
+Week 9 completed the monthly reference-data refresh and point-in-time liquid
+universe workflow.
+
+Reference snapshot date: `2026-07-28`
+
+Reference-data outputs:
+
+- supported tickers snapshot
+- `dim_security` snapshot
+- candidate pool snapshot
+- latest operational `dim_security`
+- latest operational candidate pool
+
+Coverage universe:
+
+- daily price-gap generation now uses `data/dwd/security_master/candidate_security_pool.parquet`
+- the coverage universe remains the broad universe for price download
+
+Liquidity metrics:
+
+- output root: `data/dws/equity_liquidity_monthly/`
+- incomplete months excluded by default
+- latest official metric month: `<fill in>`
+- latest passing filter count: `<fill in>`
+
+Liquid universe membership:
+
+- output root: `data/dwd/universe_membership_monthly/`
+- universes: `us_liquid_100`, `us_liquid_500`
+- latest membership month: `<fill in>`
+- source metric month: `<fill in>`
+- no-lookahead rule: passed
+- `us_liquid_100` size: 100
+- `us_liquid_500` size: 500
+- duplicate universe/month/security_id rows: 0
+- `us_liquid_100` is a subset of `us_liquid_500`
+
+Research-panel integration:
+
+- July 2026 `us_liquid_500` membership can be joined to daily DWD prices
+- duplicate `security_id/date` rows after join: 0
