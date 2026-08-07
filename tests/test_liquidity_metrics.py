@@ -8,6 +8,7 @@ import pytest
 from quant_platform.universe.liquidity import (
     LiquidityFilterConfig,
     build_monthly_liquidity_metrics,
+    filter_liquidity_metrics_by_month,
     load_liquidity_build_config,
     write_liquidity_metrics,
 )
@@ -173,3 +174,80 @@ liquid_universe:
     assert config.calendar == "XNYS"
     assert config.filters.min_median_close == 5.0
     assert config.filters.min_trading_day_coverage == 0.8
+
+def test_write_liquidity_metrics_missing_only_skips_existing_partitions(
+    tmp_path,
+):
+    metrics = build_monthly_liquidity_metrics(
+        sample_prices(),
+        calendar_name="XNYS",
+        filters=filters(),
+        include_incomplete_months=True,
+    )
+
+    output_root = tmp_path / "data" / "dws" / "equity_liquidity_monthly"
+
+    first_written = write_liquidity_metrics(
+        metrics,
+        output_root,
+        overwrite=False,
+    )
+
+    second_written = write_liquidity_metrics(
+        metrics,
+        output_root,
+        missing_only=True,
+    )
+
+    assert first_written
+    assert second_written == []
+
+
+def test_write_liquidity_metrics_can_replace_existing_partitions(
+    tmp_path,
+):
+    metrics = build_monthly_liquidity_metrics(
+        sample_prices(),
+        calendar_name="XNYS",
+        filters=filters(),
+        include_incomplete_months=True,
+    )
+
+    output_root = tmp_path / "data" / "dws" / "equity_liquidity_monthly"
+
+    first_written = write_liquidity_metrics(
+        metrics,
+        output_root,
+        overwrite=False,
+    )
+
+    replaced = write_liquidity_metrics(
+        metrics,
+        output_root,
+        replace_existing_partitions=True,
+    )
+
+    assert replaced == first_written
+
+
+def test_filter_liquidity_metrics_by_month():
+    metrics = pd.DataFrame(
+        {
+            "metric_month": [
+                "2026-06-01",
+                "2026-07-01",
+            ],
+            "ticker": ["AAPL", "AAPL"],
+        }
+    )
+
+    filtered = filter_liquidity_metrics_by_month(
+        metrics,
+        start_month="2026-07",
+        end_month="2026-07",
+    )
+
+    assert len(filtered) == 1
+    assert filtered.loc[0, "metric_month"] == pd.Timestamp(
+        "2026-07-01"
+    ).date()

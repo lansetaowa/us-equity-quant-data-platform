@@ -9,6 +9,7 @@ from quant_platform.universe.membership import (
     UniverseMembershipConfig,
     UniverseSpec,
     build_universe_membership,
+    filter_membership_by_month,
     load_universe_membership_config,
     write_universe_membership,
 )
@@ -207,6 +208,150 @@ def test_write_universe_membership_partitions(tmp_path):
             overwrite=False,
         )
 
+
+def test_write_universe_membership_missing_only_skips_existing_partitions(
+    tmp_path,
+):
+    membership = build_universe_membership(
+        sample_metrics(),
+        config=config(),
+    )
+
+    output_root = (
+        tmp_path
+        / "data"
+        / "dwd"
+        / "universe_membership_monthly"
+    )
+
+    first_written = write_universe_membership(
+        membership,
+        output_root,
+        overwrite=False,
+    )
+
+    second_written = write_universe_membership(
+        membership,
+        output_root,
+        missing_only=True,
+    )
+
+    assert first_written
+    assert second_written == []
+
+
+def test_write_universe_membership_can_replace_existing_partitions(
+    tmp_path,
+):
+    membership = build_universe_membership(
+        sample_metrics(),
+        config=config(),
+    )
+
+    output_root = (
+        tmp_path
+        / "data"
+        / "dwd"
+        / "universe_membership_monthly"
+    )
+
+    first_written = write_universe_membership(
+        membership,
+        output_root,
+        overwrite=False,
+    )
+
+    replaced = write_universe_membership(
+        membership,
+        output_root,
+        replace_existing_partitions=True,
+    )
+
+    assert sorted(path.as_posix() for path in replaced) == sorted(
+        path.as_posix() for path in first_written
+    )
+
+    for path in replaced:
+        assert path.exists()
+
+
+def test_write_universe_membership_rejects_multiple_write_modes(
+    tmp_path,
+):
+    membership = build_universe_membership(
+        sample_metrics(),
+        config=config(),
+    )
+
+    output_root = (
+        tmp_path
+        / "data"
+        / "dwd"
+        / "universe_membership_monthly"
+    )
+
+    with pytest.raises(
+        ValueError,
+        match="Use only one of overwrite, missing_only",
+    ):
+        write_universe_membership(
+            membership,
+            output_root,
+            overwrite=True,
+            missing_only=True,
+        )
+
+
+def test_filter_membership_by_month():
+    membership = pd.DataFrame(
+        {
+            "membership_month": [
+                "2026-07-01",
+                "2026-08-01",
+            ],
+            "ticker": [
+                "AAPL",
+                "MSFT",
+            ],
+        }
+    )
+
+    filtered = filter_membership_by_month(
+        membership,
+        start_membership_month="2026-08",
+        end_membership_month="2026-08",
+    )
+
+    assert len(filtered) == 1
+    assert filtered.loc[0, "membership_month"] == pd.Timestamp(
+        "2026-08-01"
+    ).date()
+    assert filtered.loc[0, "ticker"] == "MSFT"
+
+
+def test_filter_membership_by_month_rejects_invalid_range():
+    membership = pd.DataFrame(
+        {
+            "membership_month": [
+                "2026-07-01",
+                "2026-08-01",
+            ],
+            "ticker": [
+                "AAPL",
+                "MSFT",
+            ],
+        }
+    )
+
+    with pytest.raises(
+        ValueError,
+        match="start_membership_month must be <= end_membership_month",
+    ):
+        filter_membership_by_month(
+            membership,
+            start_membership_month="2026-09",
+            end_membership_month="2026-08",
+        )
 
 def test_load_universe_membership_config(tmp_path):
     config_path = tmp_path / "liquid_universe.yml"

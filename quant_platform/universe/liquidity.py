@@ -142,6 +142,74 @@ def read_dwd_price_frame(
     return frame
 
 
+def parse_month_start(
+    value: str | date | pd.Timestamp | None,
+    *,
+    field_name: str,
+) -> date | None:
+    """Parse YYYY-MM-like input to month-start date."""
+    if value is None or str(value).strip() == "":
+        return None
+
+    parsed = pd.to_datetime(
+        str(value).strip(),
+        errors="coerce",
+    )
+
+    if pd.isna(parsed):
+        raise ValueError(f"Invalid {field_name}: {value!r}")
+
+    return pd.Timestamp(parsed).to_period("M").to_timestamp().date()
+
+
+def filter_liquidity_metrics_by_month(
+    metrics: pd.DataFrame,
+    *,
+    start_month: str | date | None = None,
+    end_month: str | date | None = None,
+) -> pd.DataFrame:
+    """Filter liquidity metrics by inclusive metric-month range."""
+    output = metrics.copy()
+
+    output["metric_month"] = pd.to_datetime(
+        output["metric_month"],
+        errors="raise",
+    ).map(_month_start)
+
+    start = parse_month_start(
+        start_month,
+        field_name="start_month",
+    )
+    end = parse_month_start(
+        end_month,
+        field_name="end_month",
+    )
+
+    if start is not None and end is not None and start > end:
+        raise ValueError("start_month must be <= end_month")
+
+    if start is not None:
+        output = output[output["metric_month"] >= start].copy()
+
+    if end is not None:
+        output = output[output["metric_month"] <= end].copy()
+
+    return output.reset_index(drop=True)
+
+
+def liquidity_partition_dir(
+    output_root: str | Path,
+    metric_month: date,
+) -> Path:
+    """Return local liquidity metric partition directory."""
+    month = pd.Timestamp(metric_month)
+
+    return (
+        Path(output_root)
+        / f"year={month.year}"
+        / f"month={month.month:02d}"
+    )
+
 def _month_start(value: Any) -> date:
     return pd.Timestamp(value).to_period("M").to_timestamp().date()
 
@@ -380,33 +448,58 @@ def build_monthly_liquidity_metrics(
         ["metric_month", "ticker", "security_id"]
     ).reset_index(drop=True)
 
-
 def write_liquidity_metrics(
     metrics: pd.DataFrame,
     output_root: str | Path,
     *,
     overwrite: bool = False,
+    missing_only: bool = False,
+    replace_existing_partitions: bool = False,
 ) -> list[Path]:
     root = Path(output_root)
 
-    if root.exists():
-        if not overwrite:
-            raise FileExistsError(
-                f"Output root already exists: {root}. "
-                "Use --overwrite to replace it."
-            )
+    selected_modes = sum(
+        [
+            bool(overwrite),
+            bool(missing_only),
+            bool(replace_existing_partitions),
+        ]
+    )
 
-        shutil.rmtree(root)
-
-    root.mkdir(parents=True, exist_ok=True)
-
-    written: list[Path] = []
+    if selected_modes > 1:
+        raise ValueError(
+            "Use only one of overwrite, missing_only, "
+            "or replace_existing_partitions"
+        )
 
     if metrics.empty:
         raise ValueError("Cannot write empty liquidity metrics")
 
+    if overwrite:
+        if root.exists():
+            shutil.rmtree(root)
+
+        root.mkdir(parents=True, exist_ok=True)
+
+    elif root.exists() and not missing_only and not replace_existing_partitions:
+        raise FileExistsError(
+            f"Output root already exists: {root}. "
+            "Use --overwrite for full rebuild, --missing-only for "
+            "incremental writes, or --replace-existing-partitions for "
+            "targeted correction."
+        )
+
+    else:
+        root.mkdir(parents=True, exist_ok=True)
+
+    written: list[Path] = []
+
     working = metrics.copy()
-    metric_month = pd.to_datetime(working["metric_month"], errors="raise")
+    metric_month = pd.to_datetime(
+        working["metric_month"],
+        errors="raise",
+    )
+    working["metric_month"] = metric_month.map(_month_start)
     working["_year"] = metric_month.dt.year
     working["_month"] = metric_month.dt.month
 
@@ -416,19 +509,32 @@ def write_liquidity_metrics(
     ):
         year_int = int(year)
         month_int = int(month)
+        month_start = date(year_int, month_int, 1)
 
-        partition_dir = (
-            root
-            / f"year={year_int}"
-            / f"month={month_int:02d}"
+        partition_dir = liquidity_partition_dir(
+            root,
+            month_start,
         )
+
+        if partition_dir.exists():
+            if missing_only:
+                continue
+
+            if replace_existing_partitions:
+                shutil.rmtree(partition_dir)
+
+            elif not overwrite:
+                raise FileExistsError(
+                    f"Liquidity metric partition already exists: "
+                    f"{partition_dir}"
+                )
+
         partition_dir.mkdir(parents=True, exist_ok=True)
 
         output_path = partition_dir / "part-000.parquet"
 
         partition = (
-            partition
-            .drop(columns=["_year", "_month"])
+            partition.drop(columns=["_year", "_month"])
             .reset_index(drop=True)
         )
         partition.to_parquet(output_path, index=False)
