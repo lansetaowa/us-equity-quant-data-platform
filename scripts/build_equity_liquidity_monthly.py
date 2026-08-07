@@ -7,6 +7,7 @@ import pandas as pd
 
 from quant_platform.universe.liquidity import (
     build_monthly_liquidity_metrics,
+    filter_liquidity_metrics_by_month,
     load_liquidity_build_config,
     read_dwd_price_frame,
     summarize_liquidity_metrics,
@@ -51,6 +52,31 @@ def parse_args() -> argparse.Namespace:
         "--dry-run",
         action="store_true",
         help="Build and summarize metrics without writing files.",
+    )
+    parser.add_argument(
+        "--start-month",
+        type=str,
+        default=None,
+        help="Inclusive metric month start, e.g. 2026-07.",
+    )
+    parser.add_argument(
+        "--end-month",
+        type=str,
+        default=None,
+        help="Inclusive metric month end, e.g. 2026-07.",
+    )
+    parser.add_argument(
+        "--missing-only",
+        action="store_true",
+        help="Write only metric-month partitions that do not already exist.",
+    )
+    parser.add_argument(
+        "--replace-existing-partitions",
+        action="store_true",
+        help=(
+            "Replace only selected metric-month partitions without deleting "
+            "the full output root."
+        ),
     )
     return parser.parse_args()
 
@@ -141,6 +167,17 @@ def main() -> None:
         include_incomplete_months=include_incomplete,
     )
 
+    metrics = filter_liquidity_metrics_by_month(
+        metrics,
+        start_month=args.start_month,
+        end_month=args.end_month,
+    )
+
+    if metrics.empty:
+        raise ValueError(
+            "No liquidity metrics remain after month filtering"
+        )
+
     summary = summarize_liquidity_metrics(metrics)
 
     print("\nSummary:")
@@ -158,11 +195,16 @@ def main() -> None:
         metrics,
         output_root,
         overwrite=args.overwrite,
+        missing_only=args.missing_only,
+        replace_existing_partitions=args.replace_existing_partitions,
     )
 
-    print("\nWrote liquidity metric partitions:")
-    for path in written[-20:]:
-        print(path)
+    if written:
+        print("\nWrote liquidity metric partitions:")
+        for path in written[-20:]:
+            print(path)
+    else:
+        print("\nNo liquidity metric partitions were written.")
 
     print(f"\nPartition count: {len(written)}")
 

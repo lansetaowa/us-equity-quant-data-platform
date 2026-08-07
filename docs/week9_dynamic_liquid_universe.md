@@ -272,3 +272,21 @@ Research-panel integration:
 
 - July 2026 `us_liquid_500` membership can be joined to daily DWD prices
 - duplicate `security_id/date` rows after join: 0
+
+## Incremental universe output and warehouse publish
+
+The initial historical build may use `--overwrite`.
+
+Routine monthly updates should build only selected or missing partitions:
+
+```text
+python -m scripts.build_equity_liquidity_monthly \
+  --start-month YYYY-MM \
+  --end-month YYYY-MM \
+  --missing-only
+
+python -m scripts.build_liquid_universe_membership \
+  --start-membership-month YYYY-MM \
+  --end-membership-month YYYY-MM \
+  --missing-only
+```

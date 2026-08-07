@@ -90,6 +90,78 @@ def _load_yaml_mapping(path: str | Path) -> dict[str, Any]:
 
     return data
 
+def parse_month_start(
+    value: str | date | pd.Timestamp | None,
+    *,
+    field_name: str,
+) -> date | None:
+    """Parse YYYY-MM-like input to month-start date."""
+    if value is None or str(value).strip() == "":
+        return None
+
+    parsed = pd.to_datetime(
+        str(value).strip(),
+        errors="coerce",
+    )
+
+    if pd.isna(parsed):
+        raise ValueError(f"Invalid {field_name}: {value!r}")
+
+    return pd.Timestamp(parsed).to_period("M").to_timestamp().date()
+
+
+def filter_membership_by_month(
+    membership: pd.DataFrame,
+    *,
+    start_membership_month: str | date | None = None,
+    end_membership_month: str | date | None = None,
+) -> pd.DataFrame:
+    """Filter universe membership by inclusive membership-month range."""
+    output = membership.copy()
+
+    output["membership_month"] = pd.to_datetime(
+        output["membership_month"],
+        errors="raise",
+    ).map(_as_month_start)
+
+    start = parse_month_start(
+        start_membership_month,
+        field_name="start_membership_month",
+    )
+    end = parse_month_start(
+        end_membership_month,
+        field_name="end_membership_month",
+    )
+
+    if start is not None and end is not None and start > end:
+        raise ValueError(
+            "start_membership_month must be <= end_membership_month"
+        )
+
+    if start is not None:
+        output = output[output["membership_month"] >= start].copy()
+
+    if end is not None:
+        output = output[output["membership_month"] <= end].copy()
+
+    return output.reset_index(drop=True)
+
+
+def membership_partition_dir(
+    output_root: str | Path,
+    *,
+    universe_name: str,
+    membership_month: date,
+) -> Path:
+    """Return local universe membership partition directory."""
+    month = pd.Timestamp(membership_month)
+
+    return (
+        Path(output_root)
+        / f"universe_name={universe_name}"
+        / f"year={month.year}"
+        / f"month={month.month:02d}"
+    )
 
 def load_universe_membership_config(
     config_path: str | Path,
@@ -460,56 +532,94 @@ def build_universe_membership(
         ["universe_name", "membership_month", "rank"]
     ).reset_index(drop=True)
 
-
 def write_universe_membership(
     membership: pd.DataFrame,
     output_root: str | Path,
     *,
     overwrite: bool = False,
+    missing_only: bool = False,
+    replace_existing_partitions: bool = False,
 ) -> list[Path]:
     root = Path(output_root)
 
-    if root.exists():
-        if not overwrite:
-            raise FileExistsError(
-                f"Output root already exists: {root}. "
-                "Use --overwrite to replace it."
-            )
+    selected_modes = sum(
+        [
+            bool(overwrite),
+            bool(missing_only),
+            bool(replace_existing_partitions),
+        ]
+    )
 
-        shutil.rmtree(root)
-
-    root.mkdir(parents=True, exist_ok=True)
+    if selected_modes > 1:
+        raise ValueError(
+            "Use only one of overwrite, missing_only, "
+            "or replace_existing_partitions"
+        )
 
     if membership.empty:
         raise ValueError("Cannot write empty universe membership")
 
+    if overwrite:
+        if root.exists():
+            shutil.rmtree(root)
+
+        root.mkdir(parents=True, exist_ok=True)
+
+    elif root.exists() and not missing_only and not replace_existing_partitions:
+        raise FileExistsError(
+            f"Output root already exists: {root}. "
+            "Use --overwrite for full rebuild, --missing-only for "
+            "incremental writes, or --replace-existing-partitions for "
+            "targeted correction."
+        )
+
+    else:
+        root.mkdir(parents=True, exist_ok=True)
+
     written: list[Path] = []
 
     working = membership.copy()
-    month = pd.to_datetime(
+    membership_month = pd.to_datetime(
         working["membership_month"],
         errors="raise",
     )
-    working["_year"] = month.dt.year
-    working["_month"] = month.dt.month
+    working["membership_month"] = membership_month.map(_as_month_start)
+    working["_year"] = membership_month.dt.year
+    working["_month"] = membership_month.dt.month
 
     for (universe_name, year, month_num), partition in working.groupby(
         ["universe_name", "_year", "_month"],
         sort=True,
     ):
-        partition_dir = (
-            root
-            / f"universe_name={universe_name}"
-            / f"year={int(year)}"
-            / f"month={int(month_num):02d}"
+        year_int = int(year)
+        month_int = int(month_num)
+        month_start = date(year_int, month_int, 1)
+
+        partition_dir = membership_partition_dir(
+            root,
+            universe_name=str(universe_name),
+            membership_month=month_start,
         )
+
+        if partition_dir.exists():
+            if missing_only:
+                continue
+
+            if replace_existing_partitions:
+                shutil.rmtree(partition_dir)
+
+            elif not overwrite:
+                raise FileExistsError(
+                    f"Universe membership partition already exists: "
+                    f"{partition_dir}"
+                )
+
         partition_dir.mkdir(parents=True, exist_ok=True)
 
         output_path = partition_dir / "part-000.parquet"
 
         partition = (
-            partition
-            .drop(columns=["_year", "_month"])
+            partition.drop(columns=["_year", "_month"])
             .reset_index(drop=True)
         )
         partition.to_parquet(output_path, index=False)

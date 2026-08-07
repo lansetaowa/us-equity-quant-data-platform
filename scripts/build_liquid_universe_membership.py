@@ -7,6 +7,7 @@ import pandas as pd
 
 from quant_platform.universe.membership import (
     build_universe_membership,
+    filter_membership_by_month,
     load_universe_membership_config,
     read_liquidity_metrics,
     summarize_universe_membership,
@@ -49,6 +50,31 @@ def parse_args() -> argparse.Namespace:
         "--dry-run",
         action="store_true",
         help="Build and summarize membership without writing files.",
+    )
+    parser.add_argument(
+        "--start-membership-month",
+        type=str,
+        default=None,
+        help="Inclusive membership month start, e.g. 2026-08.",
+    )
+    parser.add_argument(
+        "--end-membership-month",
+        type=str,
+        default=None,
+        help="Inclusive membership month end, e.g. 2026-08.",
+    )
+    parser.add_argument(
+        "--missing-only",
+        action="store_true",
+        help="Write only membership partitions that do not already exist.",
+    )
+    parser.add_argument(
+        "--replace-existing-partitions",
+        action="store_true",
+        help=(
+            "Replace only selected membership partitions without deleting "
+            "the full output root."
+        ),
     )
     return parser.parse_args()
 
@@ -182,6 +208,17 @@ def main() -> None:
         config=config,
     )
 
+    membership = filter_membership_by_month(
+        membership,
+        start_membership_month=args.start_membership_month,
+        end_membership_month=args.end_membership_month,
+    )
+
+    if membership.empty:
+        raise ValueError(
+            "No universe membership rows remain after month filtering"
+        )
+
     summary = summarize_universe_membership(membership)
 
     print("\nSummary:")
@@ -200,11 +237,16 @@ def main() -> None:
         membership,
         output_root,
         overwrite=args.overwrite,
+        missing_only=args.missing_only,
+        replace_existing_partitions=args.replace_existing_partitions,
     )
 
-    print("\nWrote universe membership partitions:")
-    for path in written[-20:]:
-        print(path)
+    if written:
+        print("\nWrote universe membership partitions:")
+        for path in written[-20:]:
+            print(path)
+    else:
+        print("\nNo universe membership partitions were written.")
 
     print(f"\nPartition count: {len(written)}")
 
