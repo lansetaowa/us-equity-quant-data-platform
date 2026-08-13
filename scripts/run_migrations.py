@@ -10,6 +10,7 @@ MIGRATIONS = [
     Path("sql/001_create_metadata_tables.sql"),
     Path("sql/002_alter_pipeline_runs.sql"),
     Path("sql/003_create_symbol_ingestion_status.sql"),
+    Path("sql/006_seed_current_datasets.sql"),
 ]
 
 def main() -> None:

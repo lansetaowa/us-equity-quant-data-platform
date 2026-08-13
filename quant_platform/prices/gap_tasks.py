@@ -251,11 +251,168 @@ def _truthy_series(series: pd.Series) -> pd.Series:
 
     return normalized.isin({"true", "1", "yes", "y"})
 
+
+def build_price_gap_excluded_symbols(
+    *,
+    eligibility: pd.DataFrame,
+    tasks: pd.DataFrame,
+    latest_dwd_dates: pd.DataFrame,
+    latest_window_metadata: pd.DataFrame | None,
+    latest_complete_eod_date: date,
+    bootstrap_anchor_date: date,
+    max_failed_attempts: int,
+) -> pd.DataFrame:
+    """Build complete non-task output for the coverage universe."""
+    key_columns = ["ticker", "security_id"]
+
+    working = eligibility.copy()
+
+    for column in key_columns:
+        working[column] = working[column].astype(str).str.strip()
+        if column == "ticker":
+            working[column] = working[column].str.upper()
+
+    task_keys = (
+        tasks[key_columns].drop_duplicates()
+        if not tasks.empty
+        else pd.DataFrame(columns=key_columns)
+    )
+    task_keys["_has_task"] = True
+
+    output = working.merge(
+        task_keys,
+        on=key_columns,
+        how="left",
+    )
+
+    output["_has_task"] = output["_has_task"].notna()
+
+    latest_dwd = latest_dwd_dates.copy()
+
+    if not latest_dwd.empty:
+        for column in key_columns:
+            latest_dwd[column] = latest_dwd[column].astype(str).str.strip()
+            if column == "ticker":
+                latest_dwd[column] = latest_dwd[column].str.upper()
+
+        output = output.merge(
+            latest_dwd,
+            on=key_columns,
+            how="left",
+        )
+
+    if latest_window_metadata is not None and not latest_window_metadata.empty:
+        metadata = latest_window_metadata.copy()
+
+        for column in key_columns:
+            metadata[column] = metadata[column].astype(str).str.strip()
+            if column == "ticker":
+                metadata[column] = metadata[column].str.upper()
+
+        output = output.merge(
+            metadata,
+            on=key_columns,
+            how="left",
+        )
+
+    if "latest_dwd_date" not in output.columns:
+        output["latest_dwd_date"] = pd.NA
+
+    for column in [
+        "metadata_status",
+        "metadata_requested_start_date",
+        "metadata_requested_end_date",
+        "metadata_checked_through_date",
+    ]:
+        if column not in output.columns:
+            output[column] = pd.NA
+
+    def classify(row: pd.Series) -> str | None:
+        if bool(row.get("_has_task", False)):
+            return None
+
+        existing_reason = row.get("daily_update_exclusion_reason")
+
+        if pd.notna(existing_reason) and str(existing_reason).strip():
+            return str(existing_reason)
+
+        metadata_status = str(row.get("metadata_status", "")).strip().lower()
+
+        if metadata_status == "skipped":
+            return "metadata_skipped"
+
+        attempt_count_raw = row.get("metadata_attempt_count", row.get("attempt_count", 0))
+
+        try:
+            attempt_count = int(attempt_count_raw)
+        except (TypeError, ValueError):
+            attempt_count = 0
+
+        if metadata_status == "failed" and attempt_count >= max_failed_attempts:
+            return "failed_retry_limit_exceeded"
+
+        checked_through = row.get("metadata_checked_through_date")
+        latest_dwd_date = row.get("latest_dwd_date")
+
+        effective_latest = _max_date_or_none(
+            [
+                latest_dwd_date,
+                checked_through,
+                bootstrap_anchor_date,
+            ]
+        )
+
+        if effective_latest is not None and effective_latest >= latest_complete_eod_date:
+            return "already_checked_through_latest_eod"
+
+        return "no_gap_to_latest_eod"
+
+    output["daily_update_exclusion_reason"] = output.apply(
+        classify,
+        axis=1,
+    )
+
+    excluded = output[
+        output["daily_update_exclusion_reason"].notna()
+        & output["daily_update_exclusion_reason"].astype(str).str.strip().ne("")
+    ].copy()
+
+    excluded = excluded.drop(columns=["_has_task"], errors="ignore")
+
+    preferred_columns = [
+        "ticker",
+        "security_id",
+        "latest_dwd_date",
+        "metadata_status",
+        "metadata_attempt_count",
+        "metadata_requested_start_date",
+        "metadata_requested_end_date",
+        "metadata_checked_through_date",
+        "end_date",
+        "is_active",
+        "daily_update_exclusion_reason",
+    ]
+
+    columns = [
+        column for column in preferred_columns if column in excluded.columns
+    ] + [
+        column
+        for column in excluded.columns
+        if column not in preferred_columns
+    ]
+
+    return excluded.loc[:, columns].sort_values(
+        key_columns,
+    ).reset_index(drop=True)
+
+
 def attach_daily_update_eligibility(
     bootstrap_tasks: pd.DataFrame,
     dim_security: pd.DataFrame,
+    *,
     bootstrap_anchor_date: date,
     active_end_date_grace_days: int,
+    eligibility_reference_date: date | None = None,
 ) -> pd.DataFrame:
     """
     Add daily update eligibility to bootstrap tasks.
@@ -286,7 +443,9 @@ def attach_daily_update_eligibility(
     if "is_active" not in security.columns:
         security["is_active"] = False
 
-    cutoff_date = bootstrap_anchor_date - timedelta(
+    reference_date = eligibility_reference_date or bootstrap_anchor_date
+
+    cutoff_date = reference_date - timedelta(
         days=active_end_date_grace_days
     )
     cutoff_ts = pd.Timestamp(cutoff_date)
@@ -877,6 +1036,74 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
+def validate_task_exclusion_partition(
+    *,
+    coverage_candidates: pd.DataFrame,
+    tasks: pd.DataFrame,
+    excluded_candidates: pd.DataFrame,
+) -> None:
+    """Validate that every coverage candidate has exactly one decision."""
+    key_columns = ["ticker", "security_id"]
+
+    coverage_keys = (
+        _standardize_symbol_keys(coverage_candidates)[key_columns]
+        .drop_duplicates()
+        .copy()
+    )
+
+    if tasks.empty:
+        task_keys = pd.DataFrame(columns=key_columns)
+    else:
+        task_keys = (
+            _standardize_symbol_keys(tasks)[key_columns]
+            .drop_duplicates()
+            .copy()
+        )
+
+    if excluded_candidates.empty:
+        excluded_keys = pd.DataFrame(columns=key_columns)
+    else:
+        excluded_keys = (
+            _standardize_symbol_keys(excluded_candidates)[key_columns]
+            .drop_duplicates()
+            .copy()
+        )
+
+    overlap = task_keys.merge(
+        excluded_keys,
+        on=key_columns,
+        how="inner",
+    )
+
+    if not overlap.empty:
+        raise ValueError(
+            "Task and exclusion outputs overlap: "
+            f"{overlap.head(20).to_dict('records')}"
+        )
+
+    decision_count = len(task_keys) + len(excluded_keys)
+
+    if decision_count != len(coverage_keys):
+        decided = pd.concat(
+            [task_keys, excluded_keys],
+            ignore_index=True,
+        ).drop_duplicates()
+
+        missing = coverage_keys.merge(
+            decided,
+            on=key_columns,
+            how="left",
+            indicator=True,
+        )
+        missing = missing[missing["_merge"] == "left_only"]
+
+        raise ValueError(
+            "Task/exclusion outputs do not cover the full coverage universe. "
+            f"coverage={len(coverage_keys)}, decisions={decision_count}, "
+            f"missing_examples={missing[key_columns].head(20).to_dict('records')}"
+        )
+
+
 def main() -> None:
     args = parse_args()
 
@@ -889,22 +1116,21 @@ def main() -> None:
         excluded_output_path=args.excluded_output,
     )
 
-    bootstrap_tasks = load_bootstrap_task_list(config.bootstrap_task_list_path)
+    coverage_candidates = load_bootstrap_task_list(
+        config.bootstrap_task_list_path
+    )
     dim_security = load_dim_security(config.dim_security_path)
 
-    bootstrap_with_eligibility = attach_daily_update_eligibility(
-        bootstrap_tasks=bootstrap_tasks,
+    candidates_with_eligibility = attach_daily_update_eligibility(
+        bootstrap_tasks=coverage_candidates,
         dim_security=dim_security,
         bootstrap_anchor_date=config.bootstrap_anchor_date,
         active_end_date_grace_days=config.active_end_date_grace_days,
+        eligibility_reference_date=config.latest_complete_eod_date,
     )
 
-    eligible_bootstrap_tasks = bootstrap_with_eligibility[
-        bootstrap_with_eligibility["eligible_for_daily_update"]
-    ].copy()
-
-    excluded_bootstrap_tasks = bootstrap_with_eligibility[
-        ~bootstrap_with_eligibility["eligible_for_daily_update"]
+    eligible_candidates = candidates_with_eligibility[
+        candidates_with_eligibility["eligible_for_daily_update"]
     ].copy()
 
     latest_dwd_dates = load_latest_dwd_dates(config.dwd_price_root)
@@ -927,7 +1153,7 @@ def main() -> None:
         )
 
     tasks = build_price_gap_tasks(
-        bootstrap_tasks=eligible_bootstrap_tasks,
+        bootstrap_tasks=eligible_candidates,
         latest_dwd_dates=latest_dwd_dates,
         source=config.source,
         dataset_name=config.dataset_name,
@@ -937,22 +1163,39 @@ def main() -> None:
         max_failed_attempts=config.max_failed_attempts,
     )
 
+    excluded_candidates = build_price_gap_excluded_symbols(
+        eligibility=candidates_with_eligibility,
+        tasks=tasks,
+        latest_dwd_dates=latest_dwd_dates,
+        latest_window_metadata=latest_window_metadata,
+        latest_complete_eod_date=config.latest_complete_eod_date,
+        bootstrap_anchor_date=config.bootstrap_anchor_date,
+        max_failed_attempts=config.max_failed_attempts,
+    )
+
+    validate_task_exclusion_partition(
+        coverage_candidates=candidates_with_eligibility,
+        tasks=tasks,
+        excluded_candidates=excluded_candidates,
+    )
+
     print_summary(
         tasks=tasks,
-        excluded_tasks=excluded_bootstrap_tasks,
+        excluded_tasks=excluded_candidates,
         latest_complete_eod_date=config.latest_complete_eod_date,
         output_path=config.output_path,
         excluded_output_path=config.excluded_output_path,
-        total_bootstrap_count=len(bootstrap_tasks),
-        eligible_count=len(eligible_bootstrap_tasks),
+        total_bootstrap_count=len(coverage_candidates),
+        eligible_count=len(eligible_candidates),
     )
+
+    print(f"\ncoverage_universe_path: {config.bootstrap_task_list_path}")
 
     if args.dry_run:
         print("\ndry_run: true, no files written")
         return
 
     save_frame(tasks, config.output_path)
-    save_frame(excluded_bootstrap_tasks, config.excluded_output_path)
+    save_frame(excluded_candidates, config.excluded_output_path)
 
     print("\nSaved price gap task list and exclusion list.")
-    print(f"coverage_universe_path: {config.bootstrap_task_list_path}")

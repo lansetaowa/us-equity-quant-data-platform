@@ -290,3 +290,5 @@ python -m scripts.build_liquid_universe_membership \
   --end-membership-month YYYY-MM \
   --missing-only
 ```
+
+Daily price-gap exclusions now use the latest complete EOD date, not the old bootstrap anchor date, to determine stale `end_date` eligibility.
