@@ -9,6 +9,7 @@ import pytest
 from quant_platform.prices.gap_tasks import (
     _max_date_or_none,
     attach_daily_update_eligibility,
+    build_price_gap_excluded_symbols,
     build_price_gap_tasks,
     resolve_coverage_universe_path,
 )
@@ -646,4 +647,127 @@ def test_resolve_coverage_universe_path_falls_back_to_default():
             default,
         )
         == default
+    )
+
+
+def test_daily_update_eligibility_uses_latest_eod_reference_date():
+    bootstrap = pd.DataFrame(
+        {
+            "ticker": ["STALE"],
+            "security_id": ["tiingo:STALE"],
+        }
+    )
+
+    dim_security = pd.DataFrame(
+        {
+            "ticker": ["STALE"],
+            "security_id": ["tiingo:STALE"],
+            "end_date": [date(2026, 7, 1)],
+            "is_active": [False],
+        }
+    )
+
+    result = attach_daily_update_eligibility(
+        bootstrap_tasks=bootstrap,
+        dim_security=dim_security,
+        bootstrap_anchor_date=date(2026, 6, 11),
+        eligibility_reference_date=date(2026, 8, 4),
+        active_end_date_grace_days=7,
+    )
+
+    row = result.iloc[0]
+
+    assert not bool(row["eligible_for_daily_update"])
+    assert row["daily_update_exclusion_reason"] == "inactive_or_stale_end_date"
+
+
+def test_build_price_gap_excluded_symbols_includes_metadata_skipped():
+    eligibility = pd.DataFrame(
+        {
+            "ticker": ["AAPL", "SKIP"],
+            "security_id": ["tiingo:AAPL", "tiingo:SKIP"],
+            "eligible_for_daily_update": [True, True],
+            "daily_update_exclusion_reason": [pd.NA, pd.NA],
+            "end_date": [date(2026, 12, 31), date(2026, 12, 31)],
+            "is_active": [True, True],
+        }
+    )
+
+    tasks = pd.DataFrame(
+        {
+            "ticker": ["AAPL"],
+            "security_id": ["tiingo:AAPL"],
+        }
+    )
+
+    latest_dwd_dates = pd.DataFrame(
+        {
+            "ticker": ["AAPL", "SKIP"],
+            "security_id": ["tiingo:AAPL", "tiingo:SKIP"],
+            "latest_dwd_date": [date(2026, 8, 3), date(2026, 7, 31)],
+        }
+    )
+
+    metadata = pd.DataFrame(
+        {
+            "ticker": ["SKIP"],
+            "security_id": ["tiingo:SKIP"],
+            "metadata_status": ["skipped"],
+            "metadata_requested_start_date": [date(2026, 8, 1)],
+            "metadata_requested_end_date": [date(2026, 8, 3)],
+            "metadata_checked_through_date": [date(2026, 8, 3)],
+        }
+    )
+
+    excluded = build_price_gap_excluded_symbols(
+        eligibility=eligibility,
+        tasks=tasks,
+        latest_dwd_dates=latest_dwd_dates,
+        latest_window_metadata=metadata,
+        latest_complete_eod_date=date(2026, 8, 3),
+        bootstrap_anchor_date=date(2026, 6, 11),
+        max_failed_attempts=3,
+    )
+
+    assert set(excluded["ticker"]) == {"SKIP"}
+    assert excluded.iloc[0]["daily_update_exclusion_reason"] == "metadata_skipped"
+
+
+def test_build_price_gap_excluded_symbols_includes_already_current_symbol():
+    eligibility = pd.DataFrame(
+        {
+            "ticker": ["CURRENT"],
+            "security_id": ["tiingo:CURRENT"],
+            "eligible_for_daily_update": [True],
+            "daily_update_exclusion_reason": [pd.NA],
+            "end_date": [date(2026, 12, 31)],
+            "is_active": [True],
+        }
+    )
+
+    tasks = pd.DataFrame(columns=["ticker", "security_id"])
+
+    latest_dwd_dates = pd.DataFrame(
+        {
+            "ticker": ["CURRENT"],
+            "security_id": ["tiingo:CURRENT"],
+            "latest_dwd_date": [date(2026, 8, 3)],
+        }
+    )
+
+    excluded = build_price_gap_excluded_symbols(
+        eligibility=eligibility,
+        tasks=tasks,
+        latest_dwd_dates=latest_dwd_dates,
+        latest_window_metadata=None,
+        latest_complete_eod_date=date(2026, 8, 3),
+        bootstrap_anchor_date=date(2026, 6, 11),
+        max_failed_attempts=3,
+    )
+
+    assert len(excluded) == 1
+    assert excluded.iloc[0]["ticker"] == "CURRENT"
+    assert (
+        excluded.iloc[0]["daily_update_exclusion_reason"]
+        == "already_checked_through_latest_eod"
     )
