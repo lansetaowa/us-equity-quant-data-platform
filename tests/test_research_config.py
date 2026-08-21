@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from datetime import date
 from pathlib import Path
 
 import pytest
@@ -76,8 +77,14 @@ market_context:
   context_set: "core_v1"
   source: "tiingo"
   dataset_name: "market_context_price_daily"
+
+  price_start_date: "2019-01-01"
+
   dim_security_path: "data/dwd/security_master/dim_security.parquet"
   symbol_output_path: "data/dwd/security_master/dim_market_context_symbol/context_set=core_v1/part-000.parquet"
+
+  price_ods_root: "data/ods/source=tiingo/dataset=market_context_price_daily"
+  price_dwd_root: "data/dwd/market_context_price_daily"
 
   primary_benchmarks:
     - SPY
@@ -137,6 +144,13 @@ def test_load_market_context_config(tmp_path):
     assert config.dataset_name == "market_context_price_daily"
     assert config.dim_security_path == Path(
         "data/dwd/security_master/dim_security.parquet"
+    )
+    assert config.price_start_date == date(2019, 1, 1)
+    assert config.price_ods_root == Path(
+        "data/ods/source=tiingo/dataset=market_context_price_daily"
+    )
+    assert config.price_dwd_root == Path(
+        "data/dwd/market_context_price_daily"
     )
     assert len(config.symbols) == 3
 

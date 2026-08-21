@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+from datetime import date
+from pathlib import Path
+
 import pandas as pd
 import pytest
 
@@ -17,8 +20,13 @@ def config() -> MarketContextConfig:
         context_set="core_v1",
         source="tiingo",
         dataset_name="market_context_price_daily",
-        dim_security_path="dim_security.parquet",
-        symbol_output_path="market_context_symbols.parquet",
+        price_start_date=date(2019, 1, 1),
+        dim_security_path=Path("dim_security.parquet"),
+        symbol_output_path=Path("market_context_symbols.parquet"),
+        price_ods_root=Path(
+            "data/ods/source=tiingo/dataset=market_context_price_daily"
+        ),
+        price_dwd_root=Path("data/dwd/market_context_price_daily"),
         symbols=(
             MarketContextSymbolSpec(
                 context_group="broad_market",

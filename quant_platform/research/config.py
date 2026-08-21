@@ -1,12 +1,14 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from datetime import date
 from pathlib import Path
 from typing import Any
 
 from quant_platform.config.loaders import (
     load_yaml,
     optional_mapping,
+    parse_iso_date,
     require_mapping,
 )
 
@@ -58,8 +60,11 @@ class MarketContextConfig:
     context_set: str
     source: str
     dataset_name: str
+    price_start_date: date
     dim_security_path: Path
     symbol_output_path: Path
+    price_ods_root: Path
+    price_dwd_root: Path
     symbols: tuple[MarketContextSymbolSpec, ...]
 
 
@@ -294,7 +299,10 @@ def load_market_context_config(
         context_set=context_set,
         source=source,
         dataset_name=dataset_name,
+        price_start_date=parse_iso_date(root["price_start_date"]),
         dim_security_path=_as_path(root["dim_security_path"]),
         symbol_output_path=_as_path(root["symbol_output_path"]),
+        price_ods_root=_as_path(root["price_ods_root"]),
+        price_dwd_root=_as_path(root["price_dwd_root"]),
         symbols=tuple(specs),
     )
