@@ -1,0 +1,95 @@
+research_panel:
+  factor_set: "core_v1"
+  label_set: "core_v1"
+  default_universe_name: "us_liquid_500"
+
+  price_dwd_root: "data/dwd/equity_price_daily"
+  universe_membership_root: "data/dwd/universe_membership_monthly"
+
+  market_context_symbol_path: "data/dwd/security_master/dim_market_context_symbol/context_set=core_v1/part-000.parquet"
+  market_context_price_root: "data/dwd/market_context_price_daily"
+  market_context_feature_root: "data/dws/market_context_features_daily"
+
+  feature_output_root: "data/dws/equity_features_daily"
+  label_output_root: "data/dws/equity_forward_returns_daily"
+  panel_output_root: "data/ads/equity_research_panel_daily"
+
+  feature_scope:
+    use_ever_members: true
+    universe_name: "us_liquid_500"
+
+  rolling_windows:
+    returns: [1, 2, 4, 5, 12, 21, 24, 48, 63, 72, 126, 252]
+    return_lag_multiples: [1, 2, 3]
+    volatility: [21, 63, 126]
+    dollar_volume: [3, 20, 60]
+    price_position: [252]
+
+  labels:
+    horizons: [1, 2, 4, 5, 12, 21, 24]
+
+  technical:
+    backend: "talib"
+
+    rsi:
+      windows: [14]
+
+    mfi:
+      windows: [14]
+
+    atr:
+      windows: [14]
+
+    macd:
+      fast_period: 12
+      slow_period: 26
+      signal_period: 9
+
+    bollinger:
+      window: 20
+      num_std_up: 2.0
+      num_std_down: 2.0
+
+    tema:
+      windows: [20, 50]
+
+    adx:
+      windows: [14]
+
+    cmo:
+      windows: [14]
+
+    ultimate_oscillator:
+      timeperiod1: 7
+      timeperiod2: 14
+      timeperiod3: 28
+
+    bop:
+      enabled: true
+
+    candlestick_patterns:
+      mode: "all_talib_patterns"
+      selected:
+        - "CDLENGULFING"
+        - "CDLHAMMER"
+        - "CDLHANGINGMAN"
+        - "CDLDOJI"
+        - "CDLDRAGONFLYDOJI"
+        - "CDLGRAVESTONEDOJI"
+        - "CDLMORNINGSTAR"
+        - "CDLEVENINGSTAR"
+        - "CDLSHOOTINGSTAR"
+        - "CDLMARUBOZU"
+
+  normalization:
+    winsorize_lower: 0.01
+    winsorize_upper: 0.99
+    min_cross_section_count: 50
+
+  composites:
+    score_core_v1:
+      momentum: 0.40
+      reversal: 0.20
+      low_vol: 0.20
+      liquidity: 0.10
+      technical: 0.10
