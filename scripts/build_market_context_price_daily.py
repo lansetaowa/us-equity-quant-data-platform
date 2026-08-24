@@ -360,10 +360,11 @@ def main() -> None:
         output_paths=written,
     )
 
-    if len(new_prices) == 0 and not full_refresh:
-        status = "no_new_rows"
-    else:
-        status = "success"
+    status = (
+        "no_new_rows"
+        if len(new_prices) == 0 and not full_refresh
+        else "success"
+    )
 
     report_dir = write_build_reports(
         report_root=args.report_root,
