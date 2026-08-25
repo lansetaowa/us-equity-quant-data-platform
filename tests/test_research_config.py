@@ -42,6 +42,12 @@ research_panel:
     volatility: [21, 63, 126]
     dollar_volume: [3, 20, 60]
     price_position: [252]
+    momentum: [21, 63, 126]
+    reversal: [1, 5, 21]
+    sma: [20, 50, 200]
+    skip_recent_momentum:
+      - [252, 21]
+    annualization_days: 252
 
   labels:
     horizons: [1, 2, 4, 5, 12, 21, 24]
@@ -120,6 +126,12 @@ def test_load_research_panel_config(tmp_path):
     assert config.normalization.winsorize_lower == 0.01
     assert config.normalization.winsorize_upper == 0.99
 
+    assert config.rolling_windows["momentum"] == [21, 63, 126]
+    assert config.rolling_windows["reversal"] == [1, 5, 21]
+    assert config.rolling_windows["sma"] == [20, 50, 200]
+    assert config.rolling_windows["skip_recent_momentum"] == [(252, 21)]
+    assert config.rolling_windows["annualization_days"] == 252
+
 
 def test_research_config_rejects_non_talib_backend(tmp_path):
     path = write_research_config(tmp_path)
@@ -176,3 +188,19 @@ def test_market_context_config_rejects_duplicate_tickers(tmp_path):
         match="Duplicate market context ticker",
     ):
         load_market_context_config(path)
+
+
+def test_research_config_rejects_momentum_not_in_returns(tmp_path):
+    path = write_research_config(tmp_path)
+    text = path.read_text(encoding="utf-8")
+    text = text.replace(
+        "momentum: [21, 63, 126]",
+        "momentum: [21, 999]",
+    )
+    path.write_text(text, encoding="utf-8")
+
+    with pytest.raises(
+        ValueError,
+        match="momentum must be included",
+    ):
+        load_research_panel_config(path)

@@ -21,9 +21,20 @@ research_panel:
   rolling_windows:
     returns: [1, 2, 4, 5, 12, 21, 24, 48, 63, 72, 126, 252]
     return_lag_multiples: [1, 2, 3]
+
+    momentum: [21, 63, 126]
+    reversal: [1, 5, 21]
+
     volatility: [21, 63, 126]
     dollar_volume: [3, 20, 60]
     price_position: [252]
+
+    sma: [20, 50, 200]
+
+    skip_recent_momentum:
+      - [252, 21]
+
+    annualization_days: 252
 
   labels:
     horizons: [1, 2, 4, 5, 12, 21, 24]

@@ -5,11 +5,14 @@ from datetime import date
 from pathlib import Path
 
 import pandas as pd
+import pytest
 
 from quant_platform.research.operation import (
     build_partition_manifest,
     default_operation_id,
     default_run_id,
+    month_range_from_partition_manifest_report,
+    resolve_output_month_range,
     write_build_reports,
 )
 
@@ -112,3 +115,38 @@ def test_write_build_reports(tmp_path):
     loaded_manifest = pd.read_csv(manifest_path)
 
     assert loaded_manifest["row_count"].tolist() == [17]
+
+
+def test_month_range_from_partition_manifest_report(tmp_path):
+    report_dir = tmp_path / "reports" / "price_update_transform" / "run1"
+    report_dir.mkdir(parents=True)
+
+    pd.DataFrame(
+        {
+            "year": [2026, 2026],
+            "month": [7, 8],
+            "row_count": [10, 20],
+        }
+    ).to_csv(report_dir / "partition_manifest.csv", index=False)
+
+    start, end, manifest = month_range_from_partition_manifest_report(report_dir)
+
+    assert start == date(2026, 7, 1)
+    assert end == date(2026, 8, 1)
+    assert len(manifest) == 2
+
+
+def test_resolve_output_month_range_rejects_manual_and_report(tmp_path):
+    report_dir = tmp_path / "report"
+    report_dir.mkdir()
+
+    with pytest.raises(
+        ValueError,
+        match="Use either --price-transform-report-dir",
+    ):
+        resolve_output_month_range(
+            start_month="2026-08",
+            end_month="2026-08",
+            report_dir=report_dir,
+            report_arg_name="--price-transform-report-dir",
+        )

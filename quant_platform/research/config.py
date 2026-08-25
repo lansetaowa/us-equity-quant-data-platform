@@ -40,7 +40,7 @@ class ResearchPanelConfig:
     label_output_root: Path
     panel_output_root: Path
     feature_scope: dict[str, Any]
-    rolling_windows: dict[str, list[int]]
+    rolling_windows: dict[str, Any]
     label_horizons: tuple[int, ...]
     technical: TechnicalConfig
     normalization: NormalizationConfig
@@ -84,6 +84,38 @@ def _int_list(
 
     if any(value <= 0 for value in output):
         raise ValueError(f"{field_name} must contain positive integers")
+
+    return output
+
+
+def _int_pair_list(
+    values: Any,
+    *,
+    field_name: str,
+) -> list[tuple[int, int]]:
+    if not isinstance(values, list):
+        raise ValueError(f"{field_name} must be a list")
+
+    output: list[tuple[int, int]] = []
+
+    for item in values:
+        if not isinstance(item, (list, tuple)) or len(item) != 2:
+            raise ValueError(
+                f"{field_name} entries must be [long_window, skip_window]"
+            )
+
+        long_window = int(item[0])
+        skip_window = int(item[1])
+
+        if long_window <= 0 or skip_window <= 0:
+            raise ValueError(f"{field_name} entries must be positive")
+
+        if long_window <= skip_window:
+            raise ValueError(
+                f"{field_name} long_window must be greater than skip_window"
+            )
+
+        output.append((long_window, skip_window))
 
     return output
 
@@ -154,15 +186,50 @@ def load_research_panel_config(
         )
     )
 
-    rolling_windows = {
-        "returns": _int_list(
-            rolling_raw.get("returns", [1, 5, 21, 63, 126, 252]),
-            field_name="research_panel.rolling_windows.returns",
-        ),
+    return_windows = _int_list(
+        rolling_raw.get("returns", [1, 5, 21, 63, 126, 252]),
+        field_name="research_panel.rolling_windows.returns",
+    )
+
+    if 1 not in return_windows:
+        raise ValueError(
+            "research_panel.rolling_windows.returns must include 1 "
+            "because volatility and Amihud features use ret_1d"
+        )
+
+    momentum_windows = _int_list(
+        rolling_raw.get("momentum", [21, 63, 126]),
+        field_name="research_panel.rolling_windows.momentum",
+    )
+
+    reversal_windows = _int_list(
+        rolling_raw.get("reversal", [1, 5, 21]),
+        field_name="research_panel.rolling_windows.reversal",
+    )
+
+    missing_momentum = sorted(set(momentum_windows) - set(return_windows))
+    missing_reversal = sorted(set(reversal_windows) - set(return_windows))
+
+    if missing_momentum:
+        raise ValueError(
+            "research_panel.rolling_windows.momentum must be included "
+            f"in returns. Missing: {missing_momentum}"
+        )
+
+    if missing_reversal:
+        raise ValueError(
+            "research_panel.rolling_windows.reversal must be included "
+            f"in returns. Missing: {missing_reversal}"
+        )
+
+    rolling_windows: dict[str, Any] = {
+        "returns": return_windows,
         "return_lag_multiples": _int_list(
             rolling_raw.get("return_lag_multiples", [1, 2, 3]),
             field_name="research_panel.rolling_windows.return_lag_multiples",
         ),
+        "momentum": momentum_windows,
+        "reversal": reversal_windows,
         "volatility": _int_list(
             rolling_raw.get("volatility", [21, 63, 126]),
             field_name="research_panel.rolling_windows.volatility",
@@ -175,7 +242,25 @@ def load_research_panel_config(
             rolling_raw.get("price_position", [252]),
             field_name="research_panel.rolling_windows.price_position",
         ),
+        "sma": _int_list(
+            rolling_raw.get("sma", [20, 50, 200]),
+            field_name="research_panel.rolling_windows.sma",
+        ),
+        "skip_recent_momentum": _int_pair_list(
+            rolling_raw.get("skip_recent_momentum", [[252, 21]]),
+            field_name=(
+                "research_panel.rolling_windows.skip_recent_momentum"
+            ),
+        ),
+        "annualization_days": int(
+            rolling_raw.get("annualization_days", 252)
+        ),
     }
+
+    if rolling_windows["annualization_days"] <= 0:
+        raise ValueError(
+            "research_panel.rolling_windows.annualization_days must be positive"
+        )
 
     backend = str(technical_raw.get("backend", "talib")).strip().lower()
 

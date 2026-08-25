@@ -121,3 +121,117 @@ def write_build_reports(
     )
 
     return report_dir
+
+
+def month_range_from_partition_manifest_report(
+    report_dir: str | Path,
+) -> tuple[date, date, pd.DataFrame]:
+    report_path = Path(report_dir)
+    manifest_path = report_path / "partition_manifest.csv"
+
+    if not manifest_path.exists():
+        raise FileNotFoundError(
+            f"partition_manifest.csv not found: {manifest_path}"
+        )
+
+    manifest = pd.read_csv(manifest_path)
+
+    required = {"year", "month"}
+    missing = required - set(manifest.columns)
+
+    if missing:
+        raise ValueError(
+            f"partition_manifest.csv missing columns: {sorted(missing)}"
+        )
+
+    if manifest.empty:
+        raise ValueError(f"partition_manifest.csv is empty: {manifest_path}")
+
+    working = manifest.copy()
+    working["year"] = pd.to_numeric(
+        working["year"],
+        errors="raise",
+    ).astype(int)
+    working["month"] = pd.to_numeric(
+        working["month"],
+        errors="raise",
+    ).astype(int)
+
+    working["month_start"] = [
+        date(int(year), int(month), 1)
+        for year, month in zip(
+            working["year"],
+            working["month"],
+            strict=True,
+        )
+    ]
+
+    return (
+        min(working["month_start"]),
+        max(working["month_start"]),
+        working,
+    )
+
+
+def month_range_from_transform_report(
+    transform_report_dir: str | Path,
+) -> tuple[date, date, pd.DataFrame]:
+    return month_range_from_partition_manifest_report(transform_report_dir)
+
+
+def validate_manual_or_report_month_args(
+    *,
+    start_month: str | None,
+    end_month: str | None,
+    report_dir: Path | None,
+    report_arg_name: str,
+) -> None:
+    manual_supplied = bool(start_month or end_month)
+    report_supplied = report_dir is not None
+
+    if manual_supplied and report_supplied:
+        raise ValueError(
+            f"Use either {report_arg_name} or "
+            "--start-month/--end-month, not both"
+        )
+
+    if bool(start_month) != bool(end_month):
+        raise ValueError(
+            "--start-month and --end-month must be provided together"
+        )
+
+
+def resolve_output_month_range(
+    *,
+    start_month: str | None,
+    end_month: str | None,
+    report_dir: Path | None,
+    report_arg_name: str,
+) -> tuple[date | None, date | None, pd.DataFrame | None]:
+    validate_manual_or_report_month_args(
+        start_month=start_month,
+        end_month=end_month,
+        report_dir=report_dir,
+        report_arg_name=report_arg_name,
+    )
+
+    if report_dir is not None:
+        resolved_start, resolved_end, manifest = (
+            month_range_from_partition_manifest_report(report_dir)
+        )
+        return resolved_start, resolved_end, manifest
+
+    if start_month is None and end_month is None:
+        return None, None, None
+
+    return (
+        parse_month_start(
+            start_month,
+            field_name="start_month",
+        ),
+        parse_month_start(
+            end_month,
+            field_name="end_month",
+        ),
+        None,
+    )
