@@ -54,6 +54,10 @@ research_panel:
 
   technical:
     backend: "talib"
+    compute_candlestick_patterns: true
+
+    market_context:
+      include_candlestick_patterns: false
 
   normalization:
     winsorize_lower: 0.01
@@ -131,6 +135,12 @@ def test_load_research_panel_config(tmp_path):
     assert config.rolling_windows["sma"] == [20, 50, 200]
     assert config.rolling_windows["skip_recent_momentum"] == [(252, 21)]
     assert config.rolling_windows["annualization_days"] == 252
+
+    assert config.technical.raw["compute_candlestick_patterns"] is True
+    assert (
+        config.technical.raw["market_context"]["include_candlestick_patterns"]
+        is False
+    )
 
 
 def test_research_config_rejects_non_talib_backend(tmp_path):

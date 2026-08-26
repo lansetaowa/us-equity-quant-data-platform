@@ -42,6 +42,11 @@ research_panel:
   technical:
     backend: "talib"
 
+    compute_candlestick_patterns: true
+
+    market_context:
+      include_candlestick_patterns: false
+
     rsi:
       windows: [14]
 

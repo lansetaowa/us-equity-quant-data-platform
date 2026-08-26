@@ -26,28 +26,43 @@ def config(tmp_path: Path) -> ResearchPanelConfig:
         label_set="core_v1",
         default_universe_name="us_liquid_500",
         price_dwd_root=tmp_path / "data" / "dwd" / "equity_price_daily",
-        universe_membership_root=tmp_path
-        / "data"
-        / "dwd"
-        / "universe_membership_monthly",
+        universe_membership_root=(
+            tmp_path
+            / "data"
+            / "dwd"
+            / "universe_membership_monthly"
+        ),
         market_context_symbol_path=tmp_path / "symbols.parquet",
-        market_context_price_root=tmp_path
-        / "data"
-        / "dwd"
-        / "market_context_price_daily",
-        market_context_feature_root=tmp_path
-        / "data"
-        / "dws"
-        / "market_context_features_daily",
-        feature_output_root=tmp_path / "data" / "dws" / "equity_features_daily",
-        label_output_root=tmp_path
-        / "data"
-        / "dws"
-        / "equity_forward_returns_daily",
-        panel_output_root=tmp_path
-        / "data"
-        / "ads"
-        / "equity_research_panel_daily",
+        market_context_price_root=(
+            tmp_path
+            / "data"
+            / "dwd"
+            / "market_context_price_daily"
+        ),
+        market_context_feature_root=(
+            tmp_path
+            / "data"
+            / "dws"
+            / "market_context_features_daily"
+        ),
+        feature_output_root=(
+            tmp_path
+            / "data"
+            / "dws"
+            / "equity_features_daily"
+        ),
+        label_output_root=(
+            tmp_path
+            / "data"
+            / "dws"
+            / "equity_forward_returns_daily"
+        ),
+        panel_output_root=(
+            tmp_path
+            / "data"
+            / "ads"
+            / "equity_research_panel_daily"
+        ),
         feature_scope={
             "use_ever_members": True,
             "universe_name": "us_liquid_500",
@@ -67,7 +82,43 @@ def config(tmp_path: Path) -> ResearchPanelConfig:
         label_horizons=(1, 2, 4, 5, 12, 21, 24),
         technical=TechnicalConfig(
             backend="talib",
-            raw={},
+            raw={
+                "backend": "talib",
+                "compute_candlestick_patterns": True,
+                "market_context": {
+                    "include_candlestick_patterns": False,
+                },
+                "rsi": {"windows": [14]},
+                "mfi": {"windows": [14]},
+                "atr": {"windows": [14]},
+                "macd": {
+                    "fast_period": 12,
+                    "slow_period": 26,
+                    "signal_period": 9,
+                },
+                "bollinger": {
+                    "window": 20,
+                    "num_std_up": 2.0,
+                    "num_std_down": 2.0,
+                },
+                "tema": {"windows": [20, 50]},
+                "adx": {"windows": [14]},
+                "cmo": {"windows": [14]},
+                "ultimate_oscillator": {
+                    "timeperiod1": 7,
+                    "timeperiod2": 14,
+                    "timeperiod3": 28,
+                },
+                "bop": {"enabled": True},
+                "candlestick_patterns": {
+                    "mode": "selected",
+                    "selected": [
+                        "CDLENGULFING",
+                        "CDLHAMMER",
+                        "CDLDOJI",
+                    ],
+                },
+            },
         ),
         normalization=NormalizationConfig(
             winsorize_lower=0.01,
@@ -164,6 +215,23 @@ def test_build_equity_core_features(tmp_path):
         "sma_50_ratio",
         "sma_200_ratio",
         "day_of_week",
+        "tech_rsi_14",
+        "tech_mfi_14",
+        "tech_atr_14_norm",
+        "tech_macd_hist_12_26_9",
+        "tech_macd_hist_12_26_9_norm",
+        "tech_bb_position_20",
+        "tech_tema_20_ratio",
+        "tech_adx_14",
+        "tech_plus_di_14",
+        "tech_minus_di_14",
+        "tech_di_spread_14",
+        "tech_cmo_14",
+        "tech_ultosc_7_14_28",
+        "tech_bop",
+        "cdl_engulfing",
+        "cdl_hammer",
+        "cdl_doji",
     ]
 
     for column in expected_columns:
@@ -179,6 +247,8 @@ def test_build_equity_core_features(tmp_path):
     assert pd.notna(later["ret_252d"])
     assert pd.notna(later["mom_252_21d"])
     assert pd.notna(later["price_position_252d"])
+    assert features["tech_rsi_14"].notna().sum() > 0
+    assert features["tech_macd_hist_12_26_9"].notna().sum() > 0
 
 
 def test_filter_to_security_ids():
@@ -208,6 +278,7 @@ def test_build_market_context_core_features(tmp_path):
         prices,
         context_set="core_v1",
         rolling_windows=cfg.rolling_windows,
+        technical=cfg.technical,
     )
 
     assert len(features) == len(prices)
@@ -217,6 +288,11 @@ def test_build_market_context_core_features(tmp_path):
     assert "mom_252_21d" in features.columns
     assert "realized_vol_21d" in features.columns
     assert "sma_200_ratio" in features.columns
+    assert "tech_rsi_14" in features.columns
+    assert "tech_macd_hist_12_26_9" in features.columns
+    assert "tech_adx_14" in features.columns
+    assert "tech_bop" in features.columns
+    assert not any(column.startswith("cdl_") for column in features.columns)
 
 
 def test_write_equity_feature_partitions(tmp_path):
@@ -244,9 +320,15 @@ def test_write_equity_feature_partitions(tmp_path):
     loaded = pd.read_parquet(written[0])
 
     assert not loaded.empty
-    assert pd.to_datetime(loaded["date"]).dt.to_period("M").unique().tolist() == [
-        pd.Period("2025-03", freq="M")
-    ]
+
+    loaded_months = (
+        pd.to_datetime(loaded["date"])
+        .dt.to_period("M")
+        .unique()
+        .tolist()
+    )
+
+    assert loaded_months == [pd.Period("2025-03", freq="M")]
 
 
 def test_write_market_context_feature_partitions(tmp_path):
@@ -259,6 +341,7 @@ def test_write_market_context_feature_partitions(tmp_path):
         prices,
         context_set="core_v1",
         rolling_windows=cfg.rolling_windows,
+        technical=cfg.technical,
     )
 
     written, selected = write_market_context_feature_partitions(

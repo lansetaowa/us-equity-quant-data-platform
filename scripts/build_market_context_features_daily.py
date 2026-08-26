@@ -103,6 +103,7 @@ def main() -> None:
         prices,
         context_set=market_config.context_set,
         rolling_windows=research_config.rolling_windows,
+        technical=research_config.technical,
     )
 
     print("\nFeature rows:", len(features))

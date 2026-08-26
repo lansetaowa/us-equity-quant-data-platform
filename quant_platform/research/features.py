@@ -8,13 +8,17 @@ from typing import Any
 import numpy as np
 import pandas as pd
 
-from quant_platform.research.config import ResearchPanelConfig
+from quant_platform.research.config import (
+    ResearchPanelConfig,
+    TechnicalConfig,
+)
 from quant_platform.research.io import (
     filter_frame_by_month,
     read_parquet_dataset_by_month,
     subtract_months,
     write_monthly_partitions,
 )
+from quant_platform.research.technical import add_talib_technical_features
 
 REQUIRED_PRICE_COLUMNS = {
     "security_id",
@@ -210,12 +214,26 @@ def feature_read_lookback_months(
     rolling_windows: dict[str, Any],
 ) -> int:
     lookback_days = feature_lookback_days(rolling_windows)
-    max_lag = max(
-        [0] + [int(value) for value in rolling_windows.get("return_lag_multiples", [])]
-    )
+    return_lags = [
+        int(value)
+        for value in rolling_windows.get("return_lag_multiples", [])
+    ]
+    max_lag = max([0, *return_lags])
 
     # Approximate 21 trading days per month plus a safety buffer.
     return math.ceil((lookback_days + max_lag) / 21) + 2
+
+
+def _ordered_columns(
+    columns: pd.Index,
+    leading_columns: list[str],
+) -> list[str]:
+    leading_set = set(leading_columns)
+
+    return [
+        *leading_columns,
+        *[column for column in columns if column not in leading_set],
+    ]
 
 
 def _add_core_features(
@@ -383,6 +401,15 @@ def build_equity_core_features(
         rolling_windows=config.rolling_windows,
     )
 
+    working = add_talib_technical_features(
+        working,
+        group_columns=["security_id"],
+        technical_config=config.technical.raw,
+        include_candlestick_patterns=bool(
+            config.technical.raw.get("compute_candlestick_patterns", True)
+        ),
+    )
+
     leading_columns = [
         "date",
         "security_id",
@@ -390,9 +417,7 @@ def build_equity_core_features(
         "factor_set",
     ]
 
-    ordered = leading_columns + [
-        column for column in working.columns if column not in leading_columns
-    ]
+    ordered = _ordered_columns(working.columns, leading_columns)
 
     return working.loc[:, ordered].sort_values(
         ["date", "ticker", "security_id"]
@@ -404,6 +429,7 @@ def build_market_context_core_features(
     *,
     context_set: str,
     rolling_windows: dict[str, Any],
+    technical: TechnicalConfig | None = None,
 ) -> pd.DataFrame:
     working = _prepare_price_frame(
         prices,
@@ -426,6 +452,25 @@ def build_market_context_core_features(
         rolling_windows=rolling_windows,
     )
 
+    if technical is not None:
+        market_context_config_raw = technical.raw.get("market_context", {})
+        market_context_config = (
+            market_context_config_raw
+            if isinstance(market_context_config_raw, dict)
+            else {}
+        )
+
+        include_candlestick_patterns = bool(
+            market_context_config.get("include_candlestick_patterns", False)
+        )
+
+        working = add_talib_technical_features(
+            working,
+            group_columns=["context_set", "security_id"],
+            technical_config=technical.raw,
+            include_candlestick_patterns=include_candlestick_patterns,
+        )
+
     leading_columns = [
         "date",
         "context_set",
@@ -434,9 +479,7 @@ def build_market_context_core_features(
         "ticker",
     ]
 
-    ordered = leading_columns + [
-        column for column in working.columns if column not in leading_columns
-    ]
+    ordered = _ordered_columns(working.columns, leading_columns)
 
     return working.loc[:, ordered].sort_values(
         ["date", "context_group", "ticker"]
