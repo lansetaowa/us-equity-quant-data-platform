@@ -79,7 +79,7 @@ def config(tmp_path: Path) -> ResearchPanelConfig:
             "skip_recent_momentum": [(252, 21)],
             "annualization_days": 252,
         },
-        label_horizons=(1, 2, 4, 5, 12, 21, 24),
+        label_horizons=(1, 2, 5, 10, 21, 63),
         technical=TechnicalConfig(
             backend="talib",
             raw={

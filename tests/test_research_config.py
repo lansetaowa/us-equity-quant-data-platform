@@ -50,7 +50,7 @@ research_panel:
     annualization_days: 252
 
   labels:
-    horizons: [1, 2, 4, 5, 12, 21, 24]
+    horizons: [1, 2, 5, 10, 21, 63]
 
   technical:
     backend: "talib"
@@ -125,7 +125,7 @@ def test_load_research_panel_config(tmp_path):
         "context_set=core_v1/part-000.parquet"
     )
     assert config.rolling_windows["return_lag_multiples"] == [1, 2, 3]
-    assert config.label_horizons == (1, 2, 4, 5, 12, 21, 24)
+    assert config.label_horizons == (1, 2, 5, 10, 21, 63)
     assert config.technical.backend == "talib"
     assert config.normalization.winsorize_lower == 0.01
     assert config.normalization.winsorize_upper == 0.99

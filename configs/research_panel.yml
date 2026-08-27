@@ -37,7 +37,7 @@ research_panel:
     annualization_days: 252
 
   labels:
-    horizons: [1, 2, 4, 5, 12, 21, 24]
+    horizons: [1, 2, 5, 10, 21, 63]
 
   technical:
     backend: "talib"
