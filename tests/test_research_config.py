@@ -37,13 +37,13 @@ research_panel:
     universe_name: "us_liquid_500"
 
   rolling_windows:
-    returns: [1, 2, 4, 5, 12, 21, 24, 48, 63, 72, 126, 252]
+    returns: [1, 2, 5, 10, 21, 63, 126, 252]
     return_lag_multiples: [1, 2, 3]
-    volatility: [21, 63, 126]
-    dollar_volume: [3, 20, 60]
-    price_position: [252]
     momentum: [21, 63, 126]
-    reversal: [1, 5, 21]
+    reversal: [1, 2, 5]
+    volatility: [21, 63, 126]
+    dollar_volume: [5, 20, 60]
+    price_position: [63, 252]
     sma: [20, 50, 200]
     skip_recent_momentum:
       - [252, 21]
@@ -54,7 +54,61 @@ research_panel:
 
   technical:
     backend: "talib"
+
     compute_candlestick_patterns: true
+
+    market_context:
+      include_candlestick_patterns: false
+
+    rsi:
+      windows: [14, 21]
+
+    mfi:
+      windows: [14, 21]
+
+    atr:
+      windows: [14, 21]
+
+    macd:
+      fast_period: 12
+      slow_period: 26
+      signal_period: 9
+
+    bollinger:
+      window: 20
+      num_std_up: 2.0
+      num_std_down: 2.0
+
+    tema:
+      windows: [20, 50]
+
+    adx:
+      windows: [14, 21]
+
+    cmo:
+      windows: [14, 21]
+
+    ultimate_oscillator:
+      timeperiod1: 7
+      timeperiod2: 14
+      timeperiod3: 28
+
+    bop:
+      enabled: true
+
+    candlestick_patterns:
+      mode: "all_talib_patterns"
+      selected:
+        - "CDLENGULFING"
+        - "CDLHAMMER"
+        - "CDLHANGINGMAN"
+        - "CDLDOJI"
+        - "CDLDRAGONFLYDOJI"
+        - "CDLGRAVESTONEDOJI"
+        - "CDLMORNINGSTAR"
+        - "CDLEVENINGSTAR"
+        - "CDLSHOOTINGSTAR"
+        - "CDLMARUBOZU"
 
     market_context:
       include_candlestick_patterns: false
@@ -130,11 +184,13 @@ def test_load_research_panel_config(tmp_path):
     assert config.normalization.winsorize_lower == 0.01
     assert config.normalization.winsorize_upper == 0.99
 
-    assert config.rolling_windows["momentum"] == [21, 63, 126]
-    assert config.rolling_windows["reversal"] == [1, 5, 21]
-    assert config.rolling_windows["sma"] == [20, 50, 200]
-    assert config.rolling_windows["skip_recent_momentum"] == [(252, 21)]
-    assert config.rolling_windows["annualization_days"] == 252
+    assert config.rolling_windows["returns"] == [1, 2, 5, 10, 21, 63, 126, 252]
+    assert config.rolling_windows["reversal"] == [1, 2, 5]
+    assert config.rolling_windows["dollar_volume"] == [5, 20, 60]
+    assert config.rolling_windows["price_position"] == [63, 252]
+    assert config.label_horizons == (1, 2, 5, 10, 21, 63)
+    assert config.technical.raw["rsi"]["windows"] == [14, 21]
+    assert config.technical.raw["adx"]["windows"] == [14, 21]
 
     assert config.technical.raw["compute_candlestick_patterns"] is True
     assert (
