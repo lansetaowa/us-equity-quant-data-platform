@@ -1,11 +1,13 @@
 # Quant Data Platform — Data Operations Runbook
 
-Updated: 2026-08-17
+Updated: 2026-09-01
 
-This runbook covers two recurring data operations:
+This runbook covers four recurring data operations:
 
-1. **Daily price catch-up**: generate new price gaps, download Tiingo prices, transform to local DWD, sync to GCS, update BigQuery, and finalize Postgres metadata.
-2. **Monthly liquidity/universe update**: build the newest complete monthly liquidity metrics and next-month point-in-time liquid universe membership, then publish both to GCS and BigQuery.
+1. **Daily stock price catch-up**: generate new stock price gaps, download Tiingo prices, transform to local DWD, sync affected DWD partitions to GCS, update BigQuery, and finalize Postgres metadata.
+2. **Daily market-context price catch-up**: download and transform ETF/index-proxy market-context prices into a separate DWD product.
+3. **Monthly liquidity/universe update**: build the newest complete monthly liquidity metrics and next-month point-in-time liquid universe membership, then publish both to GCS and BigQuery.
+4. **Research derived-layer refresh**: build equity features, market-context features, forward-return labels, and the point-in-time research panel, then publish stable research outputs to GCS and BigQuery.
 
 The commands assume you are running from the repository root on Windows PowerShell.
 
@@ -17,19 +19,32 @@ The pipeline intentionally separates these layers:
 
 ```text
 candidate_pool / coverage universe
-  broad universe for price download
+  broad stock universe for daily stock price download
 
-DWD prices
-  canonical broad daily price table
+DWD stock prices
+  canonical broad daily stock price table
+
+DWD market-context prices
+  separate ETF/index-proxy price product, not part of candidate_pool
 
 monthly liquidity metrics
-  DWS derived metrics from DWD prices
+  DWS derived metrics from DWD stock prices
 
 liquid universe membership
   point-in-time monthly research/trading universe
+
+research derived layer
+  features, technical factors, labels, and point-in-time research panel
 ```
 
-Daily prices should be maintained broadly for the latest candidate pool. Research, factor work, and strategies should use the point-in-time liquid universe, typically `us_liquid_500`.
+Daily stock prices should be maintained broadly for the latest candidate pool. Research, factor work, and strategies should use the point-in-time liquid universe, typically `us_liquid_500`.
+
+Market-context ETFs such as `SPY`, `QQQ`, `VOO`, `IWM`, `DIA`, `TLT`, and sector ETFs should **not** be added to `candidate_pool` and should **not** be written into `data/dwd/equity_price_daily/`. They are maintained as a separate product:
+
+```text
+data/dwd/market_context_price_daily/context_set=core_v1/...
+data/dws/market_context_features_daily/context_set=core_v1/...
+```
 
 Do not commit runtime/generated artifacts:
 
@@ -42,17 +57,25 @@ __pycache__/
 .pytest_cache/
 ```
 
-For GCS universe-output publishing, use the existing generic sync script:
+For GCS publishing, use the existing generic sync script:
 
 ```text
 scripts.sync_data_to_gcs
 ```
 
-For BigQuery universe-output publishing, use the generic warehouse publish adapter:
+For BigQuery liquidity/universe publishing, use:
 
 ```text
 scripts.update_universe_outputs_bigquery
 ```
+
+For BigQuery research-output publishing, use:
+
+```text
+scripts.update_research_outputs_bigquery
+```
+
+Run broad `ruff --fix` only when intentionally doing lint cleanup. For normal feature/data operations, prefer targeted Ruff checks to avoid unrelated churn.
 
 ---
 
@@ -75,7 +98,7 @@ git checkout main
 git pull --ff-only origin main
 ```
 
-If you are intentionally testing new code on a feature branch, stay on that branch but make sure tests and Ruff pass before running data operations.
+If intentionally testing new code on a feature branch, stay on that branch, but make sure tests and Ruff pass before running data operations.
 
 Make sure local services and credentials are available:
 
@@ -114,11 +137,71 @@ sql/006_seed_current_datasets.sql
 
 ---
 
+## 2. Standard operation variables
+
+For a normal daily/monthly run, set one shared operation timestamp:
+
+```powershell
+$RunStamp = (Get-Date).ToUniversalTime().ToString('yyyyMMddTHHmmssZ')
+
+$OperationId = "daily_data_$RunStamp"
+$PriceRunId = "price_update_$RunStamp"
+$RunId = $PriceRunId
+$MarketContextPriceRunId = "market_context_price_$OperationId"
+```
+
+For a month-end liquidity/universe refresh, set:
+
+```powershell
+$MetricMonth = "YYYY-MM"
+$MembershipMonth = "YYYY-MM"
+
+$MetricYear = $MetricMonth.Substring(0, 4)
+$MetricMonthNum = $MetricMonth.Substring(5, 2)
+
+$MembershipYear = $MembershipMonth.Substring(0, 4)
+$MembershipMonthNum = $MembershipMonth.Substring(5, 2)
+```
+
+Example after August 2026 has complete stock DWD data:
+
+```powershell
+$MetricMonth = "2026-08"
+$MembershipMonth = "2026-09"
+```
+
+Interpretation:
+
+```text
+August 2026 liquidity metrics -> September 2026 liquid universe membership
+```
+
+For a research refresh, set:
+
+```powershell
+$RefreshStamp = (Get-Date).ToUniversalTime().ToString('yyyyMMddTHHmmssZ')
+$ResearchOperationId = "research_refresh_$RefreshStamp"
+
+$StartMonth = "2019-01"
+$EndMonth = "YYYY-MM"
+$PanelStartMonth = "2019-02"
+$PanelEndMonth = "YYYY-MM"
+
+$EquityFeatureRunId = "equity_features_$ResearchOperationId"
+$MarketContextFeatureRunId = "market_context_features_$ResearchOperationId"
+$LabelRunId = "equity_labels_$ResearchOperationId"
+$PanelRunId = "equity_research_panel_$ResearchOperationId"
+```
+
+Use the latest common available month across stock prices, market-context prices, and membership as the panel end month.
+
+---
+
 # Part A — Optional monthly reference-data refresh
 
-Run this when you want the broad daily price coverage universe to use a fresh Tiingo supported-ticker snapshot.
+Run this when you want the broad daily stock price coverage universe to use a fresh Tiingo supported-ticker snapshot.
 
-This is recommended at least monthly before the first price catch-up of the month, and also recommended when you recently changed stale-symbol eligibility logic.
+This is recommended at least monthly before the first stock price catch-up of the month, and also recommended after stale-symbol eligibility logic changes.
 
 Set the snapshot date:
 
@@ -129,7 +212,7 @@ $SnapshotDate = "YYYY-MM-DD"
 Example:
 
 ```powershell
-$SnapshotDate = "2026-08-17"
+$SnapshotDate = "2026-09-01"
 ```
 
 ## A1. Ingest Tiingo supported tickers snapshot
@@ -142,7 +225,7 @@ python -m scripts.ingest_tiingo_supported_tickers `
   --dry-run-gcs
 ```
 
-If the output looks sane, run the actual snapshot and upload:
+Actual snapshot and upload:
 
 ```powershell
 python -m scripts.ingest_tiingo_supported_tickers `
@@ -220,14 +303,16 @@ data/dwd/security_master/candidate_security_pool.parquet
 
 ## A4. Validate refreshed reference snapshots
 
-Edit `snapshot_date = "YYYY-MM-DD"` inside the Python block before running.
-
 ```powershell
+$env:SNAPSHOT_DATE = $SnapshotDate
+
 @'
 from pathlib import Path
+import os
+
 import pandas as pd
 
-snapshot_date = "YYYY-MM-DD"
+snapshot_date = os.environ["SNAPSHOT_DATE"]
 
 paths = {
     "supported_tickers_snapshot": (
@@ -246,11 +331,14 @@ paths = {
         / "candidate_security_pool.parquet"
     ),
     "dim_security_latest": Path("data/dwd/security_master/dim_security.parquet"),
-    "candidate_pool_latest": Path("data/dwd/security_master/candidate_security_pool.parquet"),
+    "candidate_pool_latest": Path(
+        "data/dwd/security_master/candidate_security_pool.parquet"
+    ),
 }
 
 for name, path in paths.items():
-    print("\n" + name)
+    print("\n" + "=" * 100)
+    print(name)
     print(path)
     print("exists:", path.exists())
 
@@ -263,8 +351,10 @@ for name, path in paths.items():
         df = pd.read_parquet(path)
 
     print("rows:", len(df))
+
     if "ticker" in df.columns:
         print("tickers:", df["ticker"].nunique())
+
     if "security_id" in df.columns:
         print("security_ids:", df["security_id"].nunique())
         print("duplicate security_id:", int(df["security_id"].duplicated().sum()))
@@ -275,21 +365,20 @@ print("\nReference snapshot validation passed.")
 
 ---
 
-# Part B — Daily price catch-up to latest available date
+# Part B — Daily stock price catch-up to latest available date
 
-This is the main daily/periodic price operation.
+This is the main daily/periodic stock price operation.
 
-Set a new run ID. Do not reuse an old run ID unless you are intentionally resuming an interrupted run.
-
-```powershell
-$RunId = "price_update_YYYYMMDD_catchup"
-```
-
-Example:
+Set a fresh run ID if not already set:
 
 ```powershell
-$RunId = "price_update_20260817_catchup"
+$RunStamp = (Get-Date).ToUniversalTime().ToString('yyyyMMddTHHmmssZ')
+$OperationId = "daily_data_$RunStamp"
+$PriceRunId = "price_update_$RunStamp"
+$RunId = $PriceRunId
 ```
+
+Do not reuse an old run ID unless intentionally resuming an interrupted run.
 
 ## B1. Generate price-gap tasks and complete exclusion list
 
@@ -305,13 +394,13 @@ Confirm the output uses the latest candidate pool as the coverage universe:
 coverage_universe_path: data/dwd/security_master/candidate_security_pool.parquet
 ```
 
-Then generate the actual task and exclusion artifacts:
+Generate the actual task and exclusion artifacts:
 
 ```powershell
 python -m scripts.generate_price_gap_tasks
 ```
 
-After Week 9.6, `price_gap_excluded_symbols.parquet` is expected to explain all non-task decisions from the coverage universe, not only inactive/stale symbols.
+After the Week 9.6 cleanup, `price_gap_excluded_symbols.parquet` is expected to explain all non-task decisions from the coverage universe, not only inactive/stale symbols.
 
 Validate both task and exclusion outputs:
 
@@ -390,10 +479,13 @@ if not tasks.empty:
     print("request_start max:", tasks["request_start_date"].max())
     print("request_end min:", tasks["request_end_date"].min())
     print("request_end max:", tasks["request_end_date"].max())
-    print("duplicate ticker/security_id:", int(tasks.duplicated(["ticker", "security_id"]).sum()))
+    print(
+        "duplicate ticker/security_id:",
+        int(tasks.duplicated(["ticker", "security_id"]).sum()),
+    )
 
 print("\nKnown tickers:")
-for ticker in ["AAPL", "MSFT", "NVDA", "AMZN", "META", "GOOG", "GOOGL", "TSLA", "ATLN", "SLAI"]:
+for ticker in ["AAPL", "MSFT", "NVDA", "AMZN", "META", "GOOG", "GOOGL", "TSLA"]:
     print("\n" + "=" * 80)
     print(ticker)
 
@@ -450,7 +542,7 @@ if not tasks.empty and int(tasks.duplicated(["ticker", "security_id"]).sum()) !=
     raise SystemExit("Duplicate price gap tasks found")
 
 if tasks.empty:
-    print("\nNo price gaps found. Stop here; no downloader run is needed.")
+    print("\nNo price gaps found. Skip downloader/transform/GCS/BQ/reconcile for stock prices.")
 else:
     print("\nPrice gap task/exclusion validation passed.")
 '@ | python -
@@ -464,15 +556,14 @@ task/excluded overlap = 0
 missing candidate decisions = 0
 ```
 
-If `tasks.empty`, stop here. Do not run the downloader, transform, GCS, BigQuery, or reconcile steps.
+If `tasks.empty`, skip B2 through B11 for stock prices. You may still run market-context catch-up, monthly liquidity/universe refresh, and research refresh if those are needed.
 
 ## B2. Confirm run ID is unused
 
 ```powershell
 docker compose exec postgres `
   psql -U quant -d quant_metadata -c `
-  "SELECT
-       COUNT(*) AS pipeline_rows
+  "SELECT COUNT(*) AS pipeline_rows
    FROM metadata.pipeline_runs
    WHERE run_id = '$RunId';"
 ```
@@ -480,8 +571,7 @@ docker compose exec postgres `
 ```powershell
 docker compose exec postgres `
   psql -U quant -d quant_metadata -c `
-  "SELECT
-       COUNT(*) AS window_rows
+  "SELECT COUNT(*) AS window_rows
    FROM metadata.price_update_window_results
    WHERE run_id = '$RunId';"
 ```
@@ -503,14 +593,6 @@ python -m scripts.run_tiingo_price_update `
   --dry-run
 ```
 
-Expected:
-
-```text
-already completed for run_id: 0
-pending tasks: <task count>
-planned API calls: <task count>
-```
-
 Confirm dry-run did not create a pipeline row:
 
 ```powershell
@@ -529,9 +611,7 @@ Expected:
 
 ## B4. Vendor freshness probe
 
-This avoids running a large catch-up to an end date Tiingo has not published yet.
-
-After the complete-exclusion cleanup, AAPL/MSFT/NVDA may be absent from the task list because they are already current. This probe therefore uses AAPL/MSFT/NVDA if present, otherwise it probes the first few generated tasks.
+This avoids running a large catch-up to an end date Tiingo has not published yet. AAPL/MSFT/NVDA may be absent from the task list because they are already current, so the probe uses preferred tickers if present and otherwise probes the first few generated tasks.
 
 ```powershell
 @'
@@ -562,9 +642,7 @@ tasks["request_start_date"] = pd.to_datetime(tasks["request_start_date"]).dt.dat
 tasks["request_end_date"] = pd.to_datetime(tasks["request_end_date"]).dt.date
 
 preferred = ["AAPL", "MSFT", "NVDA"]
-available_preferred = [
-    ticker for ticker in preferred if ticker in set(tasks["ticker"])
-]
+available_preferred = [ticker for ticker in preferred if ticker in set(tasks["ticker"])]
 
 if available_preferred:
     probe_tickers = available_preferred[:3]
@@ -640,7 +718,7 @@ python -m scripts.run_tiingo_price_update `
   --upload-gcs
 ```
 
-If interrupted, rerun the same command. Same-run resume should skip completed windows.
+If interrupted, rerun the same command with the same run ID. Same-run resume should skip completed windows.
 
 Validate Postgres results:
 
@@ -721,7 +799,7 @@ Set transform report directory:
 $TransformReportDir = "reports\price_update_transform\$RunId"
 ```
 
-## B7. Validate local DWD
+## B7. Validate local stock DWD
 
 ```powershell
 @'
@@ -731,12 +809,13 @@ import pandas as pd
 from quant_platform.paths.data_lake import DWD_PRICE_ROOT
 
 root = Path(DWD_PRICE_ROOT)
-df = pd.concat(
-    [pd.read_parquet(path) for path in root.rglob("*.parquet")],
-    ignore_index=True,
-)
+files = sorted(root.rglob("*.parquet"))
 
-df["date"] = pd.to_datetime(df["date"]).dt.date
+if not files:
+    raise SystemExit(f"No DWD price files found under {root}")
+
+df = pd.concat([pd.read_parquet(path) for path in files], ignore_index=True)
+df["date"] = pd.to_datetime(df["date"], errors="coerce").dt.date
 
 print("rows:", len(df))
 print("tickers:", df["ticker"].nunique())
@@ -748,7 +827,7 @@ print("duplicate security_id/date:", int(df.duplicated(["security_id", "date"]).
 if int(df.duplicated(["security_id", "date"]).sum()) != 0:
     raise SystemExit("Duplicate local DWD keys found")
 
-print("\nLocal DWD validation passed.")
+print("\nLocal stock DWD validation passed.")
 '@ | python -
 ```
 
@@ -785,12 +864,6 @@ python -m scripts.update_price_dwd_bigquery `
   --transform-report-dir $TransformReportDir
 ```
 
-Target must be your DWH price table, usually:
-
-```text
-<project_id>.<BIGQUERY_DWH_DATASET>.dwd_equity_price_daily
-```
-
 Stage:
 
 ```powershell
@@ -808,7 +881,7 @@ python -m scripts.update_price_dwd_bigquery `
   --transform-report-dir $TransformReportDir
 ```
 
-## B10. Validate BigQuery parity and duplicates
+## B10. Validate BigQuery parity and duplicate keys
 
 ```powershell
 @'
@@ -831,12 +904,12 @@ local = pd.concat(
     [pd.read_parquet(path) for path in Path(DWD_PRICE_ROOT).rglob("*.parquet")],
     ignore_index=True,
 )
-local["date"] = pd.to_datetime(local["date"]).dt.date
+local["date"] = pd.to_datetime(local["date"], errors="coerce").dt.date
 
 client = bigquery.Client(project=project_id, location=location)
 table = f"`{project_id}.{dataset_id}.dwd_equity_price_daily`"
 
-sql = f"""
+summary_sql = f"""
 SELECT
   COUNT(*) AS row_count,
   COUNT(DISTINCT ticker) AS ticker_count,
@@ -846,7 +919,7 @@ SELECT
 FROM {table}
 """
 
-bq = client.query(sql, location=location).to_dataframe().iloc[0]
+bq = client.query(summary_sql, location=location).to_dataframe().iloc[0]
 
 print("LOCAL")
 print("rows:", len(local))
@@ -873,30 +946,7 @@ checks = [
 if not all(checks):
     raise SystemExit("Local and BigQuery parity failed")
 
-print("\nLocal/BQ parity passed.")
-'@ | python -
-```
-
-Duplicate-key check:
-
-```powershell
-@'
-from pathlib import Path
-import os
-
-from dotenv import load_dotenv
-from google.cloud import bigquery
-
-load_dotenv(dotenv_path=Path(".env").resolve())
-
-project_id = os.environ["GCP_PROJECT_ID"]
-dataset_id = os.environ["BIGQUERY_DWH_DATASET"]
-location = os.getenv("GCP_LOCATION", "US")
-
-client = bigquery.Client(project=project_id, location=location)
-table = f"`{project_id}.{dataset_id}.dwd_equity_price_daily`"
-
-sql = f"""
+duplicate_sql = f"""
 SELECT COUNT(*) AS duplicate_key_count
 FROM (
   SELECT security_id, date, COUNT(*) AS n
@@ -906,15 +956,14 @@ FROM (
 )
 """
 
-row = client.query(sql, location=location).to_dataframe().iloc[0]
-duplicate_count = int(row["duplicate_key_count"])
-
-print("duplicate_key_count:", duplicate_count)
+dupe = client.query(duplicate_sql, location=location).to_dataframe().iloc[0]
+duplicate_count = int(dupe["duplicate_key_count"])
+print("\nBQ duplicate security_id/date:", duplicate_count)
 
 if duplicate_count != 0:
     raise SystemExit("BigQuery duplicate security_id/date keys found")
 
-print("BigQuery duplicate-key validation passed.")
+print("\nLocal/BQ parity and duplicate-key validation passed.")
 '@ | python -
 ```
 
@@ -995,33 +1044,188 @@ bq_applied = true
 
 ---
 
-# Part C — Monthly liquidity metrics and universe membership update
+# Part C — Daily market-context price catch-up
 
-Run this only after price catch-up completes and the newest full month is available in local DWD and BigQuery.
+Run this after stock price catch-up, or independently when market-context ETF prices are stale.
+
+Market-context price data is separate from stock `candidate_pool` and stock `equity_price_daily`.
+
+Set a run ID if not already set:
+
+```powershell
+$MarketContextPriceRunId = "market_context_price_$OperationId"
+```
+
+## C1. Build market-context price data
+
+Dry-run:
+
+```powershell
+python -m scripts.build_market_context_price_daily `
+  --run-id $MarketContextPriceRunId `
+  --operation-id $OperationId `
+  --dry-run
+```
+
+Expected incremental behavior:
+
+```text
+full_refresh: False
+existing max date: <latest local DWD market-context date>
+planned tasks start from existing max date + 1
+```
+
+`price_start_date` in the output is the historical seed start date. It is used for first-time/full-refresh builds only; the actual incremental request windows are the `Planned tasks` paths and printed request dates.
+
+Actual run:
+
+```powershell
+python -m scripts.build_market_context_price_daily `
+  --run-id $MarketContextPriceRunId `
+  --operation-id $OperationId
+```
+
+If you intentionally want to rebuild all market-context prices:
+
+```powershell
+python -m scripts.build_market_context_price_daily `
+  --run-id $MarketContextPriceRunId `
+  --operation-id $OperationId `
+  --full-refresh
+```
+
+## C2. Validate local market-context DWD prices
+
+```powershell
+@'
+from pathlib import Path
+
+import pandas as pd
+
+from quant_platform.research.config import load_market_context_config
+
+config = load_market_context_config("configs/market_context.yml")
+
+root = Path(config.price_dwd_root) / f"context_set={config.context_set}"
+files = sorted(root.rglob("*.parquet"))
+
+print("root:", root)
+print("files:", len(files))
+
+if not files:
+    raise SystemExit("No market context price files found")
+
+df = pd.concat([pd.read_parquet(path) for path in files], ignore_index=True)
+df["date"] = pd.to_datetime(df["date"], errors="coerce").dt.date
+
+print("rows:", len(df))
+print("tickers:", df["ticker"].nunique())
+print("security_ids:", df["security_id"].nunique())
+print("min date:", df["date"].min())
+print("max date:", df["date"].max())
+print(
+    "duplicate context/security/date:",
+    int(df.duplicated(["context_set", "security_id", "date"]).sum()),
+)
+
+if df["ticker"].nunique() != 17:
+    raise SystemExit(f"Expected 17 market context tickers, got {df['ticker'].nunique()}")
+
+if int(df.duplicated(["context_set", "security_id", "date"]).sum()) != 0:
+    raise SystemExit("Duplicate market context price keys found")
+
+print("\nMarket context price validation passed.")
+'@ | python -
+```
+
+## C3. Check market-context price report
+
+```powershell
+Get-Content "reports\market_context_price_build\$MarketContextPriceRunId\summary.json"
+Import-Csv "reports\market_context_price_build\$MarketContextPriceRunId\partition_manifest.csv" | Format-Table
+Import-Csv "reports\market_context_price_build\$MarketContextPriceRunId\download_results.csv" | Format-Table
+```
+
+If the report status is `no_op`, no downstream market-context feature update is necessary unless you are doing a full research refresh.
+
+---
+
+# Part D — Monthly liquidity metrics and universe membership update
+
+Run this only after stock price catch-up completes and the newest full month is available in local DWD and BigQuery.
 
 Set variables:
 
 ```powershell
 $MetricMonth = "YYYY-MM"
 $MembershipMonth = "YYYY-MM"
+
+$MetricYear = $MetricMonth.Substring(0, 4)
+$MetricMonthNum = $MetricMonth.Substring(5, 2)
+
+$MembershipYear = $MembershipMonth.Substring(0, 4)
+$MembershipMonthNum = $MembershipMonth.Substring(5, 2)
 ```
 
-Example after completing July 2026 price data:
+Example after completing August 2026 stock price data:
 
 ```powershell
-$MetricMonth = "2026-07"
-$MembershipMonth = "2026-08"
+$MetricMonth = "2026-08"
+$MembershipMonth = "2026-09"
 ```
 
 Interpretation:
 
 ```text
-July 2026 liquidity metrics -> August 2026 liquid universe membership
+August 2026 liquidity metrics -> September 2026 liquid universe membership
 ```
 
-## C1. Build monthly liquidity metrics incrementally
+## D0. Confirm the metric month is complete
 
-Normal monthly no-op-safe command:
+```powershell
+@'
+from pathlib import Path
+
+import pandas as pd
+
+from quant_platform.paths.data_lake import DWD_PRICE_ROOT
+from quant_platform.research.config import load_market_context_config
+
+market_config = load_market_context_config("configs/market_context.yml")
+
+
+def read_max_date(root: Path) -> object:
+    files = sorted(root.rglob("*.parquet"))
+
+    if not files:
+        raise SystemExit(f"No parquet files under {root}")
+
+    pieces = [pd.read_parquet(path, columns=["date"]) for path in files]
+    df = pd.concat(pieces, ignore_index=True)
+
+    return pd.to_datetime(df["date"], errors="coerce").dt.date.max()
+
+
+stock_max = read_max_date(Path(DWD_PRICE_ROOT))
+market_context_max = read_max_date(
+    Path(market_config.price_dwd_root) / f"context_set={market_config.context_set}"
+)
+
+research_max = min(stock_max, market_context_max)
+research_end_month = research_max.strftime("%Y-%m")
+
+print("STOCK_DWD_MAX_DATE=", stock_max)
+print("MARKET_CONTEXT_DWD_MAX_DATE=", market_context_max)
+print("RESEARCH_MAX_DATE=", research_max)
+print("RESEARCH_END_MONTH=", research_end_month)
+'@ | python -
+```
+
+For a month-end liquidity refresh, make sure `STOCK_DWD_MAX_DATE` covers the last trading session of `$MetricMonth`.
+
+## D1. Build monthly liquidity metrics
+
+Normal no-op-safe command:
 
 ```powershell
 python -m scripts.build_equity_liquidity_monthly `
@@ -1030,20 +1234,7 @@ python -m scripts.build_equity_liquidity_monthly `
   --missing-only
 ```
 
-Expected if partition already exists:
-
-```text
-No missing liquidity metric partitions; skipping source DWD read.
-Partition count: 0
-```
-
-Expected if partition is missing:
-
-```text
-Partition count: 1
-```
-
-For targeted correction/recompute:
+For targeted correction/recompute, especially if you may have built a partial month earlier:
 
 ```powershell
 python -m scripts.build_equity_liquidity_monthly `
@@ -1054,31 +1245,44 @@ python -m scripts.build_equity_liquidity_monthly `
 
 Use `--overwrite` only for intentional full historical rebuilds.
 
-## C2. Validate local liquidity metrics
-
-Edit `metric_month = "YYYY-MM"` inside the Python block before running.
+## D2. Validate local liquidity metrics
 
 ```powershell
+$env:METRIC_MONTH = $MetricMonth
+
 @'
 from pathlib import Path
+import os
+
 import pandas as pd
 
-metric_month = "YYYY-MM"
+metric_month = os.environ["METRIC_MONTH"]
 metric_date = pd.Timestamp(metric_month + "-01").date()
 
 root = Path("data/dws/equity_liquidity_monthly")
-df = pd.concat(
-    [pd.read_parquet(path) for path in root.rglob("*.parquet")],
-    ignore_index=True,
-)
+files = sorted(root.rglob("*.parquet"))
 
-df["metric_month"] = pd.to_datetime(df["metric_month"]).dt.date
+if not files:
+    raise SystemExit("No liquidity metric files found")
+
+df = pd.concat([pd.read_parquet(path) for path in files], ignore_index=True)
+df["metric_month"] = pd.to_datetime(df["metric_month"], errors="coerce").dt.date
 
 latest = df[df["metric_month"] == metric_date].copy()
 
+print("metric_month:", metric_month)
 print("rows:", len(latest))
-print("passing filters:", int(latest["passes_liquidity_filters"].sum()))
-print("duplicate metric_month/security_id:", int(latest.duplicated(["metric_month", "security_id"]).sum()))
+print("security_ids:", latest["security_id"].nunique() if not latest.empty else 0)
+print(
+    "passing filters:",
+    int(latest["passes_liquidity_filters"].sum()) if not latest.empty else 0,
+)
+print(
+    "duplicate metric_month/security_id:",
+    int(latest.duplicated(["metric_month", "security_id"]).sum())
+    if not latest.empty
+    else 0,
+)
 
 if latest.empty:
     raise SystemExit("No rows for selected metric month")
@@ -1112,28 +1316,15 @@ print("\nLiquidity metrics validation passed.")
 '@ | python -
 ```
 
-## C3. Build liquid universe membership incrementally
+## D3. Build liquid universe membership
 
-Normal monthly no-op-safe command:
+Normal no-op-safe command:
 
 ```powershell
 python -m scripts.build_liquid_universe_membership `
   --start-membership-month $MembershipMonth `
   --end-membership-month $MembershipMonth `
   --missing-only
-```
-
-Expected if partitions already exist:
-
-```text
-No universe membership partitions were written.
-Partition count: 0
-```
-
-Expected if partitions are missing:
-
-```text
-Partition count: 2
 ```
 
 For targeted correction/recompute:
@@ -1145,23 +1336,31 @@ python -m scripts.build_liquid_universe_membership `
   --replace-existing-partitions
 ```
 
-## C4. Validate local liquid universe membership
-
-Edit `membership_month = "YYYY-MM"` inside the Python block before running.
+## D4. Validate local liquid universe membership
 
 ```powershell
+$env:MEMBERSHIP_MONTH = $MembershipMonth
+$env:METRIC_MONTH = $MetricMonth
+
 @'
 from pathlib import Path
+import os
+
 import pandas as pd
 
-membership_month = "YYYY-MM"
+membership_month = os.environ["MEMBERSHIP_MONTH"]
+metric_month = os.environ["METRIC_MONTH"]
+
 membership_date = pd.Timestamp(membership_month + "-01").date()
+metric_date = pd.Timestamp(metric_month + "-01").date()
 
 root = Path("data/dwd/universe_membership_monthly")
-df = pd.concat(
-    [pd.read_parquet(path) for path in root.rglob("*.parquet")],
-    ignore_index=True,
-)
+files = sorted(root.rglob("*.parquet"))
+
+if not files:
+    raise SystemExit("No universe membership files found")
+
+df = pd.concat([pd.read_parquet(path) for path in files], ignore_index=True)
 
 for column in [
     "membership_month",
@@ -1171,13 +1370,24 @@ for column in [
     "lookback_start_month",
     "lookback_end_month",
 ]:
-    df[column] = pd.to_datetime(df[column]).dt.date
+    if column in df.columns:
+        df[column] = pd.to_datetime(df[column], errors="coerce").dt.date
 
 latest = df[df["membership_month"] == membership_date].copy()
 
+print("membership_month:", membership_month)
+print("source metric month expected:", metric_month)
 print("rows:", len(latest))
-print("universes:", sorted(latest["universe_name"].unique()))
-print("duplicate universe/month/security_id:", int(latest.duplicated(["universe_name", "membership_month", "security_id"]).sum()))
+print("universes:", sorted(latest["universe_name"].unique()) if not latest.empty else [])
+print(
+    "duplicate universe/month/security_id:",
+    int(latest.duplicated(["universe_name", "membership_month", "security_id"]).sum())
+    if not latest.empty
+    else 0,
+)
+
+if latest.empty:
+    raise SystemExit("No membership rows for selected month")
 
 expected_sizes = {
     "us_liquid_100": 100,
@@ -1210,6 +1420,14 @@ for universe_name, expected_size in expected_sizes.items():
 
     if ranks != list(range(1, expected_size + 1)):
         raise SystemExit(f"{universe_name} ranks are not contiguous")
+
+    source_months = set(rows["source_metric_month"])
+
+    if source_months != {metric_date}:
+        raise SystemExit(
+            f"{universe_name} source_metric_month mismatch: "
+            f"{source_months} != {metric_date}"
+        )
 
 us100 = set(latest[latest["universe_name"] == "us_liquid_100"]["security_id"])
 us500 = set(latest[latest["universe_name"] == "us_liquid_500"]["security_id"])
@@ -1251,17 +1469,17 @@ print("\nLiquid universe membership validation passed.")
 
 ---
 
-# Part D — Publish liquidity metrics and membership to GCS
+# Part E — Publish liquidity metrics and membership to GCS / BigQuery
 
-Use existing generic GCS sync.
+Use this after Part D local validation passes.
 
-## D1. Sync selected liquidity month to GCS
+## E1. Sync selected liquidity month to GCS
 
 Dry-run:
 
 ```powershell
 python -m scripts.sync_data_to_gcs `
-  --local-root data\dws\equity_liquidity_monthly\year=YYYY\month=MM `
+  --local-root data\dws\equity_liquidity_monthly\year=$MetricYear\month=$MetricMonthNum `
   --dry-run
 ```
 
@@ -1269,28 +1487,17 @@ Apply:
 
 ```powershell
 python -m scripts.sync_data_to_gcs `
-  --local-root data\dws\equity_liquidity_monthly\year=YYYY\month=MM
+  --local-root data\dws\equity_liquidity_monthly\year=$MetricYear\month=$MetricMonthNum
 ```
 
-Example for July 2026:
-
-```powershell
-python -m scripts.sync_data_to_gcs `
-  --local-root data\dws\equity_liquidity_monthly\year=2026\month=07 `
-  --dry-run
-
-python -m scripts.sync_data_to_gcs `
-  --local-root data\dws\equity_liquidity_monthly\year=2026\month=07
-```
-
-## D2. Sync selected membership month to GCS
+## E2. Sync selected membership month to GCS
 
 Dry-run:
 
 ```powershell
 python -m scripts.sync_data_to_gcs `
-  --local-root data\dwd\universe_membership_monthly\universe_name=us_liquid_100\year=YYYY\month=MM `
-  --local-root data\dwd\universe_membership_monthly\universe_name=us_liquid_500\year=YYYY\month=MM `
+  --local-root data\dwd\universe_membership_monthly\universe_name=us_liquid_100\year=$MembershipYear\month=$MembershipMonthNum `
+  --local-root data\dwd\universe_membership_monthly\universe_name=us_liquid_500\year=$MembershipYear\month=$MembershipMonthNum `
   --dry-run
 ```
 
@@ -1298,21 +1505,8 @@ Apply:
 
 ```powershell
 python -m scripts.sync_data_to_gcs `
-  --local-root data\dwd\universe_membership_monthly\universe_name=us_liquid_100\year=YYYY\month=MM `
-  --local-root data\dwd\universe_membership_monthly\universe_name=us_liquid_500\year=YYYY\month=MM
-```
-
-Example for August 2026:
-
-```powershell
-python -m scripts.sync_data_to_gcs `
-  --local-root data\dwd\universe_membership_monthly\universe_name=us_liquid_100\year=2026\month=08 `
-  --local-root data\dwd\universe_membership_monthly\universe_name=us_liquid_500\year=2026\month=08 `
-  --dry-run
-
-python -m scripts.sync_data_to_gcs `
-  --local-root data\dwd\universe_membership_monthly\universe_name=us_liquid_100\year=2026\month=08 `
-  --local-root data\dwd\universe_membership_monthly\universe_name=us_liquid_500\year=2026\month=08
+  --local-root data\dwd\universe_membership_monthly\universe_name=us_liquid_100\year=$MembershipYear\month=$MembershipMonthNum `
+  --local-root data\dwd\universe_membership_monthly\universe_name=us_liquid_500\year=$MembershipYear\month=$MembershipMonthNum
 ```
 
 For the first full seed, sync all local universe outputs:
@@ -1328,97 +1522,32 @@ python -m scripts.sync_data_to_gcs `
   --local-root data\dwd\universe_membership_monthly
 ```
 
----
-
-# Part E — Publish liquidity metrics and membership to BigQuery
+## E3. Publish liquidity and membership to BigQuery
 
 BigQuery tables:
 
 ```text
-quant_dwh.dws_equity_liquidity_monthly
-quant_dwh.dim_universe_membership_monthly
+<BIGQUERY_DWH_DATASET>.dws_equity_liquidity_monthly
+<BIGQUERY_DWH_DATASET>.dim_universe_membership_monthly
 ```
 
-## E1. Check whether BigQuery tables exist
-
-```powershell
-@'
-from pathlib import Path
-import os
-
-from dotenv import load_dotenv
-from google.api_core.exceptions import NotFound
-from google.cloud import bigquery
-
-load_dotenv(dotenv_path=Path(".env").resolve())
-
-project_id = os.environ["GCP_PROJECT_ID"]
-dataset_id = os.environ["BIGQUERY_DWH_DATASET"]
-location = os.getenv("GCP_LOCATION", "US")
-
-client = bigquery.Client(project=project_id, location=location)
-
-for table_name in [
-    "dws_equity_liquidity_monthly",
-    "dim_universe_membership_monthly",
-]:
-    table_id = f"{project_id}.{dataset_id}.{table_name}"
-
-    try:
-        table = client.get_table(table_id)
-        print(table_id, "exists", "rows=", table.num_rows)
-    except NotFound:
-        print(table_id, "MISSING")
-'@ | python -
-```
-
-## E2. First-time BigQuery seed
-
-Run only if the tables are missing or you intentionally want a full rebuild.
-
-Make sure all local universe outputs have already been synced to GCS.
-
-Liquidity full-replace:
+First-time full seed, only if tables are missing or intentionally rebuilding:
 
 ```powershell
 python -m scripts.update_universe_outputs_bigquery `
   --dataset liquidity_monthly `
   --mode full-replace `
   --start-month 2019-01 `
-  --end-month YYYY-MM
-```
-
-Membership full-replace:
-
-```powershell
-python -m scripts.update_universe_outputs_bigquery `
-  --dataset universe_membership `
-  --mode full-replace `
-  --start-month 2019-02 `
-  --end-month YYYY-MM
-```
-
-Examples after July metrics and August membership:
-
-```powershell
-python -m scripts.update_universe_outputs_bigquery `
-  --dataset liquidity_monthly `
-  --mode full-replace `
-  --start-month 2019-01 `
-  --end-month 2026-07
+  --end-month $MetricMonth
 
 python -m scripts.update_universe_outputs_bigquery `
   --dataset universe_membership `
   --mode full-replace `
   --start-month 2019-02 `
-  --end-month 2026-08
+  --end-month $MembershipMonth
 ```
 
-## E3. Routine monthly BigQuery replace
-
-Use this after the tables already exist.
-
-Liquidity:
+Routine monthly replace:
 
 ```powershell
 python -m scripts.update_universe_outputs_bigquery `
@@ -1426,11 +1555,7 @@ python -m scripts.update_universe_outputs_bigquery `
   --mode replace-months `
   --start-month $MetricMonth `
   --end-month $MetricMonth
-```
 
-Membership:
-
-```powershell
 python -m scripts.update_universe_outputs_bigquery `
   --dataset universe_membership `
   --mode replace-months `
@@ -1438,11 +1563,12 @@ python -m scripts.update_universe_outputs_bigquery `
   --end-month $MembershipMonth
 ```
 
-## E4. Validate BigQuery outputs
-
-Edit the two date strings inside the Python block before running.
+## E4. Validate BigQuery liquidity/universe outputs
 
 ```powershell
+$env:METRIC_MONTH_DATE = "$MetricMonth-01"
+$env:MEMBERSHIP_MONTH_DATE = "$MembershipMonth-01"
+
 @'
 from pathlib import Path
 import os
@@ -1456,8 +1582,8 @@ project_id = os.environ["GCP_PROJECT_ID"]
 dataset_id = os.environ["BIGQUERY_DWH_DATASET"]
 location = os.getenv("GCP_LOCATION", "US")
 
-metric_month = "YYYY-MM-01"
-membership_month = "YYYY-MM-01"
+metric_month = os.environ["METRIC_MONTH_DATE"]
+membership_month = os.environ["MEMBERSHIP_MONTH_DATE"]
 
 client = bigquery.Client(project=project_id, location=location)
 
@@ -1512,6 +1638,8 @@ for name, sql in queries.items():
     print(name)
     df = client.query(sql, location=location).to_dataframe()
     print(df.to_string(index=False))
+
+print("\nUniverse BigQuery validation complete.")
 '@ | python -
 ```
 
@@ -1537,57 +1665,782 @@ membership_duplicates:
 
 ---
 
-# Part F — Complete monthly data-operation checklist
+# Part R — Research derived-layer refresh
 
-For a normal month after price catch-up:
+Run this after:
+
+```text
+1. stock DWD daily price catch-up completes
+2. market-context daily price catch-up completes
+3. monthly liquidity metrics and next-month universe membership are refreshed, when a new full month is available
+```
+
+Research outputs:
+
+```text
+data/dws/equity_features_daily
+data/dws/market_context_features_daily
+data/dws/equity_forward_returns_daily
+data/ads/equity_research_panel_daily
+```
+
+## R0. Research config assumptions
+
+`configs/research_panel.yml` is the source of truth for:
+
+```text
+factor_set
+label_set
+rolling_windows
+technical windows
+label horizons
+feature / label / panel output roots
+```
+
+For daily stock data, use trading-session horizons. Current recommended `core_v1` values:
+
+```yaml
+rolling_windows:
+  returns: [1, 2, 5, 10, 21, 63, 126, 252]
+  return_lag_multiples: [1, 2, 3]
+
+  momentum: [21, 63, 126]
+  reversal: [1, 2, 5]
+
+  volatility: [21, 63, 126]
+  dollar_volume: [5, 20, 60]
+  price_position: [63, 252]
+
+  sma: [20, 50, 200]
+
+  skip_recent_momentum:
+    - [252, 21]
+
+  annualization_days: 252
+
+labels:
+  horizons: [1, 2, 5, 10, 21, 63]
+
+technical:
+  backend: "talib"
+  compute_candlestick_patterns: true
+  market_context:
+    include_candlestick_patterns: false
+  rsi:
+    windows: [14, 21]
+  mfi:
+    windows: [14, 21]
+  atr:
+    windows: [14, 21]
+  macd:
+    fast_period: 12
+    slow_period: 26
+    signal_period: 9
+  bollinger:
+    window: 20
+    num_std_up: 2.0
+    num_std_down: 2.0
+  tema:
+    windows: [20, 50]
+  adx:
+    windows: [14, 21]
+  cmo:
+    windows: [14, 21]
+  ultimate_oscillator:
+    timeperiod1: 7
+    timeperiod2: 14
+    timeperiod3: 28
+  bop:
+    enabled: true
+  candlestick_patterns:
+    mode: "all_talib_patterns"
+```
+
+Avoid crypto/hourly windows such as `4, 12, 24, 48, 72` unless intentionally creating a new factor set.
+
+## R1. Set research operation IDs
 
 ```powershell
+$RefreshStamp = (Get-Date).ToUniversalTime().ToString('yyyyMMddTHHmmssZ')
+$ResearchOperationId = "research_refresh_$RefreshStamp"
+
+$StartMonth = "2019-01"
+$EndMonth = "YYYY-MM"
+$PanelStartMonth = "2019-02"
+$PanelEndMonth = "YYYY-MM"
+
+$EquityFeatureRunId = "equity_features_$ResearchOperationId"
+$MarketContextFeatureRunId = "market_context_features_$ResearchOperationId"
+$LabelRunId = "equity_labels_$ResearchOperationId"
+$PanelRunId = "equity_research_panel_$ResearchOperationId"
+```
+
+For month-end full refresh after August 2026 data is complete:
+
+```powershell
+$EndMonth = "2026-08"
+$PanelEndMonth = "2026-08"
+```
+
+If stock prices, market-context prices, and membership all contain September rows, you can set:
+
+```powershell
+$EndMonth = "2026-09"
+$PanelEndMonth = "2026-09"
+```
+
+## R2. Build equity features
+
+Dry-run:
+
+```powershell
+python -m scripts.build_equity_features_daily `
+  --run-id $EquityFeatureRunId `
+  --operation-id $ResearchOperationId `
+  --source-price-run-id $PriceRunId `
+  --start-month $StartMonth `
+  --end-month $EndMonth `
+  --dry-run
+```
+
+Full overwrite:
+
+```powershell
+python -m scripts.build_equity_features_daily `
+  --run-id $EquityFeatureRunId `
+  --operation-id $ResearchOperationId `
+  --source-price-run-id $PriceRunId `
+  --start-month $StartMonth `
+  --end-month $EndMonth `
+  --overwrite
+```
+
+## R3. Build market-context features
+
+Dry-run:
+
+```powershell
+python -m scripts.build_market_context_features_daily `
+  --run-id $MarketContextFeatureRunId `
+  --operation-id $ResearchOperationId `
+  --source-market-context-price-run-id $MarketContextPriceRunId `
+  --start-month $StartMonth `
+  --end-month $EndMonth `
+  --dry-run
+```
+
+Full overwrite:
+
+```powershell
+python -m scripts.build_market_context_features_daily `
+  --run-id $MarketContextFeatureRunId `
+  --operation-id $ResearchOperationId `
+  --source-market-context-price-run-id $MarketContextPriceRunId `
+  --start-month $StartMonth `
+  --end-month $EndMonth `
+  --overwrite
+```
+
+## R4. Build forward-return labels
+
+Labels are computed by per-security trading-row shift. The configured horizon `21` means 21 future trading rows, not 21 calendar days.
+
+Dry-run:
+
+```powershell
+python -m scripts.build_equity_forward_returns_daily `
+  --run-id $LabelRunId `
+  --operation-id $ResearchOperationId `
+  --source-price-run-id $PriceRunId `
+  --start-month $StartMonth `
+  --end-month $EndMonth `
+  --dry-run
+```
+
+Full overwrite:
+
+```powershell
+python -m scripts.build_equity_forward_returns_daily `
+  --run-id $LabelRunId `
+  --operation-id $ResearchOperationId `
+  --source-price-run-id $PriceRunId `
+  --start-month $StartMonth `
+  --end-month $EndMonth `
+  --overwrite
+```
+
+## R5. Build point-in-time research panel
+
+The panel applies the final point-in-time membership filter. Features and labels are generated for `us_liquid_500` ever-members, but the panel keeps only rows whose dates fall inside the relevant monthly membership effective window.
+
+Dry-run:
+
+```powershell
+python -m scripts.build_equity_research_panel_daily `
+  --run-id $PanelRunId `
+  --operation-id $ResearchOperationId `
+  --source-feature-run-id $EquityFeatureRunId `
+  --source-label-run-id $LabelRunId `
+  --source-market-context-feature-run-id $MarketContextFeatureRunId `
+  --start-month $PanelStartMonth `
+  --end-month $PanelEndMonth `
+  --dry-run
+```
+
+Full overwrite:
+
+```powershell
+python -m scripts.build_equity_research_panel_daily `
+  --run-id $PanelRunId `
+  --operation-id $ResearchOperationId `
+  --source-feature-run-id $EquityFeatureRunId `
+  --source-label-run-id $LabelRunId `
+  --source-market-context-feature-run-id $MarketContextFeatureRunId `
+  --start-month $PanelStartMonth `
+  --end-month $PanelEndMonth `
+  --overwrite
+```
+
+## R6. Validate regenerated research outputs
+
+This validation reads `configs/research_panel.yml` dynamically and should not require edits when feature windows change.
+
+```powershell
+@'
+from pathlib import Path
+
+import pandas as pd
+
+from quant_platform.research.config import (
+    load_market_context_config,
+    load_research_panel_config,
+)
+
+research_config = load_research_panel_config("configs/research_panel.yml")
+market_config = load_market_context_config("configs/market_context.yml")
+
+universe_name = str(
+    research_config.feature_scope.get(
+        "universe_name",
+        research_config.default_universe_name,
+    )
+)
+
+paths = {
+    "equity_features": (
+        Path(research_config.feature_output_root)
+        / f"factor_set={research_config.factor_set}"
+    ),
+    "market_context_features": (
+        Path(research_config.market_context_feature_root)
+        / f"context_set={market_config.context_set}"
+    ),
+    "labels": (
+        Path(research_config.label_output_root)
+        / f"label_set={research_config.label_set}"
+    ),
+    "panel": (
+        Path(research_config.panel_output_root)
+        / f"universe_name={universe_name}"
+        / f"factor_set={research_config.factor_set}"
+    ),
+}
+
+frames = {}
+
+for name, root in paths.items():
+    print("\n" + "=" * 100)
+    print(name)
+    print("root:", root)
+
+    files = sorted(root.rglob("*.parquet"))
+    print("files:", len(files))
+
+    if not files:
+        raise SystemExit(f"No files found for {name}: {root}")
+
+    df = pd.concat([pd.read_parquet(path) for path in files], ignore_index=True)
+    df["date"] = pd.to_datetime(df["date"], errors="coerce").dt.date
+
+    print("rows:", len(df))
+    print("min date:", df["date"].min())
+    print("max date:", df["date"].max())
+
+    if "ticker" in df.columns:
+        print("tickers:", df["ticker"].nunique())
+
+    if "security_id" in df.columns:
+        print("security_ids:", df["security_id"].nunique())
+
+    frames[name] = df
+
+equity = frames["equity_features"]
+mkt = frames["market_context_features"]
+labels = frames["labels"]
+panel = frames["panel"]
+
+feature_required = []
+
+for horizon in research_config.rolling_windows["returns"]:
+    feature_required.append(f"ret_{horizon}d")
+
+for horizon in research_config.rolling_windows["momentum"]:
+    feature_required.append(f"mom_{horizon}d")
+
+for long_window, skip_window in research_config.rolling_windows["skip_recent_momentum"]:
+    feature_required.append(f"mom_{long_window}_{skip_window}d")
+
+for horizon in research_config.rolling_windows["reversal"]:
+    feature_required.append(f"rev_{horizon}d")
+
+for horizon in research_config.rolling_windows["volatility"]:
+    feature_required.append(f"realized_vol_{horizon}d")
+
+for horizon in research_config.rolling_windows["dollar_volume"]:
+    feature_required.append(f"avg_dollar_volume_{horizon}d")
+
+for horizon in research_config.rolling_windows["price_position"]:
+    feature_required.append(f"price_position_{horizon}d")
+
+for horizon in research_config.rolling_windows["sma"]:
+    feature_required.append(f"sma_{horizon}_ratio")
+
+technical_raw = research_config.technical.raw
+
+for horizon in technical_raw["rsi"]["windows"]:
+    feature_required.append(f"tech_rsi_{horizon}")
+
+for horizon in technical_raw["mfi"]["windows"]:
+    feature_required.append(f"tech_mfi_{horizon}")
+
+for horizon in technical_raw["atr"]["windows"]:
+    feature_required.append(f"tech_atr_{horizon}_norm")
+
+for horizon in technical_raw["adx"]["windows"]:
+    feature_required.extend(
+        [
+            f"tech_adx_{horizon}",
+            f"tech_plus_di_{horizon}",
+            f"tech_minus_di_{horizon}",
+            f"tech_di_spread_{horizon}",
+        ]
+    )
+
+for horizon in technical_raw["cmo"]["windows"]:
+    feature_required.append(f"tech_cmo_{horizon}")
+
+macd = technical_raw["macd"]
+macd_suffix = f"{macd['fast_period']}_{macd['slow_period']}_{macd['signal_period']}"
+
+bollinger = technical_raw["bollinger"]
+bb_window = bollinger["window"]
+
+for horizon in technical_raw["tema"]["windows"]:
+    feature_required.append(f"tech_tema_{horizon}_ratio")
+
+ult = technical_raw["ultimate_oscillator"]
+ult_suffix = f"{ult['timeperiod1']}_{ult['timeperiod2']}_{ult['timeperiod3']}"
+
+feature_required.extend(
+    [
+        f"tech_macd_hist_{macd_suffix}",
+        f"tech_macd_hist_{macd_suffix}_norm",
+        f"tech_bb_position_{bb_window}",
+        f"tech_ultosc_{ult_suffix}",
+        "tech_bop",
+    ]
+)
+
+label_required = []
+
+for horizon in research_config.label_horizons:
+    label_required.extend(
+        [
+            f"label_fwd_ret_{horizon}d",
+            f"has_label_fwd_ret_{horizon}d",
+            f"label_fwd_date_{horizon}d",
+        ]
+    )
+
+market_feature_required = [
+    column for column in feature_required if not column.startswith("cdl_")
+]
+
+panel_required = [
+    "date",
+    "universe_name",
+    "membership_month",
+    "effective_start_date",
+    "effective_end_date",
+    "rank",
+    "security_id",
+    "ticker",
+    "factor_set",
+    "label_set",
+    "mkt_spy_ret_1d",
+    "mkt_spy_ret_21d",
+    "excess_ret_1d_vs_spy",
+    *feature_required,
+    *[f"label_fwd_ret_{horizon}d" for horizon in research_config.label_horizons],
+]
+
+checks = {
+    "equity_features": (equity, feature_required),
+    "market_context_features": (mkt, market_feature_required),
+    "labels": (labels, label_required),
+    "panel": (panel, panel_required),
+}
+
+for name, (df, required_columns) in checks.items():
+    missing = [column for column in required_columns if column not in df.columns]
+
+    print("\n" + "=" * 100)
+    print(name)
+    print("missing columns:", len(missing))
+
+    if missing:
+        print(missing[:100])
+        raise SystemExit(f"{name} missing required columns")
+
+duplicate_checks = {
+    "equity_features": (equity, ["date", "security_id", "factor_set"]),
+    "market_context_features": (mkt, ["date", "context_set", "security_id"]),
+    "labels": (labels, ["date", "security_id", "label_set"]),
+    "panel": (panel, ["date", "universe_name", "security_id", "factor_set"]),
+}
+
+for name, (df, keys) in duplicate_checks.items():
+    duplicate_count = int(df.duplicated(keys).sum())
+    print(name, "duplicate keys:", duplicate_count, keys)
+
+    if duplicate_count != 0:
+        raise SystemExit(f"{name} duplicate keys found")
+
+for column in ["effective_start_date", "effective_end_date"]:
+    panel[column] = pd.to_datetime(panel[column], errors="coerce").dt.date
+
+bad_effective = panel[
+    (panel["date"] < panel["effective_start_date"])
+    | (panel["date"] >= panel["effective_end_date"])
+]
+
+print("\nbad effective-window rows:", len(bad_effective))
+
+if not bad_effective.empty:
+    raise SystemExit("Panel contains rows outside membership effective windows")
+
+cdl_cols = [c for c in equity.columns if c.startswith("cdl_")]
+mkt_cdl_cols = [c for c in mkt.columns if c.startswith("cdl_")]
+
+print("\nequity candlestick columns:", len(cdl_cols))
+print("market context candlestick columns:", len(mkt_cdl_cols))
+
+if len(cdl_cols) < 20:
+    raise SystemExit("Expected many equity candlestick columns")
+
+if mkt_cdl_cols:
+    raise SystemExit("Market context features should not have candlestick columns")
+
+print("\nDaily-stock research refresh validation passed.")
+'@ | python -
+```
+
+---
+
+# Part S — Publish research outputs to GCS / BigQuery
+
+Use this after Part R validation passes.
+
+Research outputs to publish:
+
+```text
+data/dwd/security_master/dim_market_context_symbol
+data/dwd/market_context_price_daily
+data/dws/market_context_features_daily
+data/dws/equity_features_daily
+data/dws/equity_forward_returns_daily
+data/ads/equity_research_panel_daily
+```
+
+Do not publish `data/ods/` or `reports/` as research tables.
+
+## S1. Sync research outputs to GCS
+
+Dry-run:
+
+```powershell
+python -m scripts.sync_data_to_gcs `
+  --local-root data\dwd\security_master\dim_market_context_symbol `
+  --local-root data\dwd\market_context_price_daily `
+  --local-root data\dws\market_context_features_daily `
+  --local-root data\dws\equity_features_daily `
+  --local-root data\dws\equity_forward_returns_daily `
+  --local-root data\ads\equity_research_panel_daily `
+  --dry-run
+```
+
+Apply:
+
+```powershell
+python -m scripts.sync_data_to_gcs `
+  --local-root data\dwd\security_master\dim_market_context_symbol `
+  --local-root data\dwd\market_context_price_daily `
+  --local-root data\dws\market_context_features_daily `
+  --local-root data\dws\equity_features_daily `
+  --local-root data\dws\equity_forward_returns_daily `
+  --local-root data\ads\equity_research_panel_daily
+```
+
+## S2. Validate GCS research outputs
+
+```powershell
+@'
+from pathlib import Path
+import os
+
+from dotenv import load_dotenv
+from google.cloud import storage
+
+load_dotenv(dotenv_path=Path(".env").resolve())
+
+bucket_name = os.environ["GCS_BUCKET"]
+project_id = os.environ["GCP_PROJECT_ID"]
+
+prefixes = [
+    "dwd/security_master/dim_market_context_symbol/",
+    "dwd/market_context_price_daily/",
+    "dws/market_context_features_daily/",
+    "dws/equity_features_daily/",
+    "dws/equity_forward_returns_daily/",
+    "ads/equity_research_panel_daily/",
+]
+
+client = storage.Client(project=project_id)
+bucket = client.bucket(bucket_name)
+
+for prefix in prefixes:
+    blobs = list(bucket.list_blobs(prefix=prefix, max_results=20))
+
+    print("\n" + "=" * 100)
+    print("prefix:", f"gs://{bucket_name}/{prefix}")
+    print("sample object count:", len(blobs))
+
+    if not blobs:
+        raise SystemExit(f"No GCS objects found under {prefix}")
+
+    for blob in blobs[:10]:
+        print(blob.name, blob.size)
+
+print("\nGCS research output validation passed.")
+'@ | python -
+```
+
+## S3. Publish research outputs to BigQuery
+
+Confirm the publisher exists:
+
+```powershell
+Test-Path scripts\update_research_outputs_bigquery.py
+```
+
+Plan:
+
+```powershell
+python -m scripts.update_research_outputs_bigquery `
+  --dataset all `
+  --mode plan
+```
+
+Apply:
+
+```powershell
+python -m scripts.update_research_outputs_bigquery `
+  --dataset all `
+  --mode apply
+```
+
+The research publisher performs full table replacement for these research outputs. This is appropriate for first-time publish or after a feature schema change.
+
+Target BigQuery tables:
+
+```text
+<BIGQUERY_DWH_DATASET>.dim_market_context_symbol
+<BIGQUERY_DWH_DATASET>.dwd_market_context_price_daily
+<BIGQUERY_DWH_DATASET>.dws_market_context_features_daily
+<BIGQUERY_DWH_DATASET>.dws_equity_features_daily
+<BIGQUERY_DWH_DATASET>.dws_equity_forward_returns_daily
+<BIGQUERY_DWH_DATASET>.ads_equity_research_panel_daily
+```
+
+## S4. Validate BigQuery research outputs
+
+```powershell
+@'
+from pathlib import Path
+import os
+
+from dotenv import load_dotenv
+from google.cloud import bigquery
+
+load_dotenv(dotenv_path=Path(".env").resolve())
+
+project_id = os.environ["GCP_PROJECT_ID"]
+dataset_id = os.environ["BIGQUERY_DWH_DATASET"]
+location = os.getenv("GCP_LOCATION", "US")
+
+client = bigquery.Client(project=project_id, location=location)
+
+tables = {
+    "dim_market_context_symbol": {
+        "keys": ["context_set", "security_id"],
+        "date_field": None,
+    },
+    "dwd_market_context_price_daily": {
+        "keys": ["date", "context_set", "security_id"],
+        "date_field": "date",
+    },
+    "dws_market_context_features_daily": {
+        "keys": ["date", "context_set", "security_id"],
+        "date_field": "date",
+    },
+    "dws_equity_features_daily": {
+        "keys": ["date", "security_id", "factor_set"],
+        "date_field": "date",
+    },
+    "dws_equity_forward_returns_daily": {
+        "keys": ["date", "security_id", "label_set"],
+        "date_field": "date",
+    },
+    "ads_equity_research_panel_daily": {
+        "keys": ["date", "universe_name", "security_id", "factor_set"],
+        "date_field": "date",
+    },
+}
+
+for table_name, spec in tables.items():
+    full_table = f"`{project_id}.{dataset_id}.{table_name}`"
+
+    print("\n" + "=" * 100)
+    print(table_name)
+
+    if spec["date_field"] is None:
+        summary_sql = f"""
+        SELECT
+          COUNT(*) AS row_count,
+          COUNT(DISTINCT ticker) AS ticker_count,
+          COUNT(DISTINCT security_id) AS security_id_count
+        FROM {full_table}
+        """
+    else:
+        date_field = spec["date_field"]
+        summary_sql = f"""
+        SELECT
+          COUNT(*) AS row_count,
+          COUNT(DISTINCT ticker) AS ticker_count,
+          COUNT(DISTINCT security_id) AS security_id_count,
+          MIN({date_field}) AS min_date,
+          MAX({date_field}) AS max_date
+        FROM {full_table}
+        """
+
+    summary = client.query(summary_sql, location=location).to_dataframe()
+    print(summary.to_string(index=False))
+
+    key_columns = ", ".join(spec["keys"])
+
+    duplicate_sql = f"""
+    SELECT COUNT(*) AS duplicate_key_count
+    FROM (
+      SELECT {key_columns}, COUNT(*) AS n
+      FROM {full_table}
+      GROUP BY {key_columns}
+      HAVING n > 1
+    )
+    """
+
+    duplicates = client.query(duplicate_sql, location=location).to_dataframe()
+    duplicate_count = int(duplicates.iloc[0]["duplicate_key_count"])
+
+    print("duplicate_key_count:", duplicate_count)
+
+    if duplicate_count != 0:
+        raise SystemExit(f"Duplicate keys found in {table_name}")
+
+print("\nBigQuery research output validation passed.")
+'@ | python -
+```
+
+---
+
+# Part N — Notebook inspection
+
+Use the inspection notebook for local/BQ/GCS exploration after research outputs are generated and optionally published.
+
+Recommended notebook path:
+
+```text
+notebook/quant_research_panel_inspection.ipynb
+```
+
+Recommended run order:
+
+```text
+1. Setup
+2. Load configs
+3. Local dataset inventory
+4. Panel summary
+5. Column-family summary
+6. Missingness
+7. Label coverage
+8. Simple IC by horizon
+9. Factor decile analysis
+10. Market context inspection
+11. Optional BigQuery checks
+12. Optional GCS checks
+```
+
+If notebook output becomes large, clear it before committing:
+
+```powershell
+jupyter nbconvert `
+  --ClearOutputPreprocessor.enabled=True `
+  --inplace notebook\quant_research_panel_inspection.ipynb
+```
+
+If `jupyter` CLI is unavailable, clear outputs in VS Code before committing.
+
+---
+
+# Part F — Complete month-end data-operation checklist
+
+For a normal month-end run after the newest full month has stock DWD data:
+
+```powershell
+$RunStamp = (Get-Date).ToUniversalTime().ToString('yyyyMMddTHHmmssZ')
+$OperationId = "daily_data_$RunStamp"
+$PriceRunId = "price_update_$RunStamp"
+$RunId = $PriceRunId
+$MarketContextPriceRunId = "market_context_price_$OperationId"
+
+$SnapshotDate = "YYYY-MM-DD"
 $MetricMonth = "YYYY-MM"
 $MembershipMonth = "YYYY-MM"
 ```
 
-Build local derived outputs:
+Run:
 
-```powershell
-python -m scripts.build_equity_liquidity_monthly `
-  --start-month $MetricMonth `
-  --end-month $MetricMonth `
-  --missing-only
-
-python -m scripts.build_liquid_universe_membership `
-  --start-membership-month $MembershipMonth `
-  --end-membership-month $MembershipMonth `
-  --missing-only
+```text
+1. Part A — reference-data refresh, usually monthly
+2. Part B — stock price catch-up
+3. Part C — market-context price catch-up
+4. Part D — liquidity metrics and next-month membership
+5. Part E — publish liquidity/membership to GCS/BQ
+6. Part R — refresh research derived layer
+7. Part S — publish research outputs to GCS/BQ
+8. Part N — inspect notebook
 ```
 
-Sync selected outputs to GCS:
-
-```powershell
-python -m scripts.sync_data_to_gcs `
-  --local-root data\dws\equity_liquidity_monthly\year=YYYY\month=MM
-
-python -m scripts.sync_data_to_gcs `
-  --local-root data\dwd\universe_membership_monthly\universe_name=us_liquid_100\year=YYYY\month=MM `
-  --local-root data\dwd\universe_membership_monthly\universe_name=us_liquid_500\year=YYYY\month=MM
-```
-
-Update BigQuery:
-
-```powershell
-python -m scripts.update_universe_outputs_bigquery `
-  --dataset liquidity_monthly `
-  --mode replace-months `
-  --start-month $MetricMonth `
-  --end-month $MetricMonth
-
-python -m scripts.update_universe_outputs_bigquery `
-  --dataset universe_membership `
-  --mode replace-months `
-  --start-month $MembershipMonth `
-  --end-month $MembershipMonth
-```
-
-Run final checks:
+Final checks:
 
 ```powershell
 python -m pytest -q
@@ -1595,34 +2448,28 @@ python -m ruff check .
 git status --short
 ```
 
-If this was only a data operation, no source-code commit is needed.
+If this was only a data operation, no source-code commit is needed. If you changed configs, scripts, tests, docs, or notebooks, commit only those source artifacts.
 
 ---
 
-# Part G — Today-specific instructions for 2026-08-17
+# Part G — Today-specific instructions for 2026-09-01 / 2026-09-02
 
-Today is 2026-08-17. August is not a complete month yet, so the normal action is:
+Use this section for the September 2026 run after August 2026 data is complete.
 
-```text
-run Part A reference refresh
-run Part B daily price catch-up
-skip Parts C, D, and E unless intentionally recomputing July metrics / August membership
+## G1. Use the correct branch and clean status
+
+If the Week 10 branch is still being finalized:
+
+```powershell
+git checkout week10-research-features-panel
+git pull --ff-only
 ```
 
-## G1. Use the correct branch
-
-If the Week 9.6 cleanup has already been merged:
+If it has already merged:
 
 ```powershell
 git checkout main
 git pull --ff-only origin main
-```
-
-If it is not merged, stay on the cleanup branch:
-
-```powershell
-git checkout week9-6-gap-metadata-cleanup
-git pull
 ```
 
 Then:
@@ -1635,44 +2482,129 @@ docker compose exec postgres pg_isready -U quant -d quant_metadata
 python -m scripts.run_migrations
 ```
 
-If `python -m ruff check .` fails because you are on a branch with unrelated lint-rule experiments, stop and clean that branch before running production data operations.
+## G2. Set September run variables
 
-## G2. Set today's variables
+For 2026-09-01:
 
 ```powershell
-$SnapshotDate = "2026-08-17"
-$RunId = "price_update_20260817_catchup"
+$SnapshotDate = "2026-09-01"
 ```
 
-## G3. Refresh today's Tiingo reference snapshot
+For 2026-09-02:
 
-Run Part A1 through A4 using:
+```powershell
+$SnapshotDate = "2026-09-02"
+```
+
+Then:
+
+```powershell
+$RunStamp = (Get-Date).ToUniversalTime().ToString('yyyyMMddTHHmmssZ')
+$OperationId = "daily_data_$RunStamp"
+$PriceRunId = "price_update_$RunStamp"
+$RunId = $PriceRunId
+$MarketContextPriceRunId = "market_context_price_$OperationId"
+
+$MetricMonth = "2026-08"
+$MembershipMonth = "2026-09"
+
+$MetricYear = $MetricMonth.Substring(0, 4)
+$MetricMonthNum = $MetricMonth.Substring(5, 2)
+$MembershipYear = $MembershipMonth.Substring(0, 4)
+$MembershipMonthNum = $MembershipMonth.Substring(5, 2)
+```
+
+## G3. Run reference and price operations
+
+Run:
 
 ```text
-snapshot_date = 2026-08-17
+Part A
+Part B
+Part C
 ```
 
-This refresh is recommended today because the stale-symbol logic now depends more directly on current `dim_security.end_date`.
+If stock price tasks are empty, skip B2-B11. Continue to Part C and then verify whether August is complete.
 
-## G4. Generate tasks and exclusions
+## G4. Build August liquidity and September membership
 
-Run Part B1.
+Run Part D using:
 
-Expected after the Week 9.6 cleanup:
+```powershell
+$MetricMonth = "2026-08"
+$MembershipMonth = "2026-09"
+```
+
+If August liquidity or September membership was already generated from incomplete August data, use the `--replace-existing-partitions` commands in Part D.
+
+Then run Part E to publish the selected monthly outputs.
+
+## G5. Refresh research outputs
+
+Set:
+
+```powershell
+$RefreshStamp = (Get-Date).ToUniversalTime().ToString('yyyyMMddTHHmmssZ')
+$ResearchOperationId = "research_refresh_$RefreshStamp"
+
+$StartMonth = "2019-01"
+$EndMonth = "2026-08"
+$PanelStartMonth = "2019-02"
+$PanelEndMonth = "2026-08"
+
+$EquityFeatureRunId = "equity_features_$ResearchOperationId"
+$MarketContextFeatureRunId = "market_context_features_$ResearchOperationId"
+$LabelRunId = "equity_labels_$ResearchOperationId"
+$PanelRunId = "equity_research_panel_$ResearchOperationId"
+```
+
+If stock prices, market-context prices, and membership all contain September rows, set:
+
+```powershell
+$EndMonth = "2026-09"
+$PanelEndMonth = "2026-09"
+```
+
+Run Part R and Part S.
+
+## G6. Source-code commit policy
+
+If you changed `configs/research_panel.yml`, tests, runbook, BQ publish script, or notebook, commit only those files:
+
+```powershell
+git status --short
+git diff --stat
+```
+
+Example:
+
+```powershell
+git add `
+  configs\research_panel.yml `
+  tests\test_research_config.py `
+  tests\test_research_features.py `
+  tests\test_research_technical.py `
+  tests\test_research_panel.py `
+  docs\data_operations_runbook.md `
+  scripts\update_research_outputs_bigquery.py `
+  notebook\quant_research_panel_inspection.ipynb
+```
+
+Do not add:
 
 ```text
-candidate unique keys = task unique keys + excluded unique keys
-task/excluded overlap = 0
-missing candidate decisions = 0
+data/
+reports/
+.env
+.venv/
 ```
 
-If task count is zero, stop here.
+Commit and push:
 
-## G5. Run the daily catch-up if tasks exist
-
-Run Parts B2 through B11.
-
-Do not run Parts C through E today unless you intentionally want to recompute and republish existing July/August universe outputs.
+```powershell
+git commit -m "Update data operations runbook for research refresh"
+git push
+```
 
 ---
 
@@ -1694,11 +2626,25 @@ Same-run resume should skip completed windows.
 
 Permanent ticker-not-found responses should be recorded as terminal `skipped`, not `failed`. If failures remain in Postgres, inspect them before transforming.
 
-## Stale symbols still appear in task list
+## Vendor freshness probe fails
+
+If the probe says returned max date is earlier than request end date, Tiingo has not published the requested date yet. Regenerate price-gap tasks later instead of continuing with a stale end date.
+
+## Market-context dry-run prints `price_start_date: 2019-01-01`
+
+That is only the configured historical seed start. For incremental runs, the actual request windows are shown under `Planned tasks`, for example:
+
+```text
+SPY 2026-08-22 -> 2026-08-31
+```
+
+If `full_refresh: False`, the script should use existing DWD max date + 1.
+
+## Stale symbols still appear in stock task list
 
 Regenerate supported tickers, `dim_security`, and candidate pool snapshots first. Then regenerate price-gap tasks.
 
-If stale symbols still appear, inspect:
+Inspect:
 
 ```text
 data/dwd/security_master/dim_security.parquet
@@ -1706,7 +2652,7 @@ metadata.symbol_ingestion_status
 metadata.price_update_window_results
 ```
 
-The daily eligibility cutoff should now use latest complete EOD minus `active_end_date_grace_days`, not the old bootstrap anchor date.
+The daily eligibility cutoff should use latest complete EOD minus `active_end_date_grace_days`, not the old bootstrap anchor date.
 
 ## `--missing-only` is slow for liquidity metrics
 
@@ -1721,9 +2667,29 @@ scripts/build_equity_liquidity_monthly.py
 
 Use `--mode full-replace` once to seed them. After that, use `--mode replace-months`.
 
+## Research BigQuery tables missing
+
+Create and run:
+
+```text
+scripts.update_research_outputs_bigquery
+```
+
+Then publish with:
+
+```powershell
+python -m scripts.update_research_outputs_bigquery `
+  --dataset all `
+  --mode apply
+```
+
 ## GCS objects missing for BigQuery load
 
 Run `scripts.sync_data_to_gcs` for the selected local partitions before running BigQuery publish.
+
+## Full `ruff check .` suddenly reports many unrelated files
+
+Do not run broad `ruff --fix` unless intentionally doing repo-wide lint cleanup. Prefer targeted checks around the files you changed. If accidental broad Ruff changes appear, inspect `git diff --stat` carefully and revert unrelated modifications before committing.
 
 ## Do not commit generated data
 
