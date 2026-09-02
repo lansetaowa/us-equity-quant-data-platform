@@ -1,0 +1,46 @@
+market_context:
+  context_set: "core_v1"
+  source: "tiingo"
+  dataset_name: "market_context_price_daily"
+
+  price_start_date: "2019-01-01"
+
+  price_ods_root: "data/ods/source=tiingo/dataset=market_context_price_daily"
+  price_dwd_root: "data/dwd/market_context_price_daily"
+
+  dim_security_path: "data/dwd/security_master/dim_security.parquet"
+
+  symbol_output_path: "data/dwd/security_master/dim_market_context_symbol/context_set=core_v1/part-000.parquet"
+
+  primary_benchmarks:
+    - SPY
+    - QQQ
+    - IWM
+    - TLT
+
+  symbols:
+    broad_market:
+      - SPY
+      - VOO
+      - DIA
+      - IWM
+
+    growth:
+      - QQQ
+
+    bonds_rates:
+      - TLT
+
+    sectors:
+      - XLB
+      - XLC
+      - XLE
+      - XLF
+      - XLI
+      - XLK
+      - XLP
+      - XLRE
+      - XLU
+      - XLV
+      - XLY
+  

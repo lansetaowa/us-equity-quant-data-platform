@@ -14,3 +14,4 @@ dbt-bigquery
 google-cloud-bigquery
 google-cloud-bigquery-storage
 pandas-market-calendars
+TA-Lib>=0.6.5
